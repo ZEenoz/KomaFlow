@@ -3,7 +3,7 @@ import { respectsFinishedJob } from './finishedJobRecovery';
 import { buildJobWaitBudget } from './jobWaitBudget';
 import type { ProcessJobMessage, PopupState, PreloadActiveEngineMessage, BubbleDetectionMode, HistoryRetentionPeriod } from '../shared/types';
 import { DEFAULT_POPUP_STATE } from '../shared/types';
-import { CLOUDFLARE_QUOTA_DEFAULT_ENDPOINT, STORAGE_KEYS } from '../shared/constants';
+import { CLOUDFLARE_QUOTA_DEFAULT_ENDPOINT, RENDER_FONT_MIN_SIZE_RANGE, STORAGE_KEYS } from '../shared/constants';
 import modelsRegistryData from '../shared/models-registry.json';
 import { normalizeCustomApiConfig } from '../shared/customApi';
 import { blobToDataUrl } from '../shared/utils/blobDataUrl';
@@ -243,9 +243,12 @@ export function normalizePopupState(popupState: Partial<PopupState> | undefined)
         ? completedState.renderFontAlignment
         : 'auto',
     renderFontMinSize:
-      typeof completedState.renderFontMinSize === 'number' && completedState.renderFontMinSize >= 4 && completedState.renderFontMinSize <= 24
+      typeof completedState.renderFontMinSize === 'number' &&
+      Number.isFinite(completedState.renderFontMinSize) &&
+      completedState.renderFontMinSize >= RENDER_FONT_MIN_SIZE_RANGE.min &&
+      completedState.renderFontMinSize <= RENDER_FONT_MIN_SIZE_RANGE.max
         ? completedState.renderFontMinSize
-        : 6,
+        : RENDER_FONT_MIN_SIZE_RANGE.default,
     bubbleMode,
     sfxPolicy,
     historyRetention,

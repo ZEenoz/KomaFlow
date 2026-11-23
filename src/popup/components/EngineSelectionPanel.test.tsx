@@ -386,3 +386,108 @@ describe('WebLLM download control', () => {
     container.remove();
   });
 });
+
+describe('Text Rendering Options min font size', () => {
+  /**
+   * Renders the panel, opens the Text Rendering Options section and returns its handles.
+   *
+   * @param state - Popup state to render.
+   * @returns Container, React root, updateState spy and the section's inputs.
+   */
+  async function renderFontOptions(state: PopupState) {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    const updateState = vi.fn();
+
+    await act(async () => {
+      root.render(<EngineSelectionPanel state={state} updateState={updateState} />);
+    });
+
+    const optionsButton = Array.from(container.querySelectorAll('button')).find(
+      (candidate) => candidate.textContent?.includes('Text Rendering Options')
+    );
+    expect(optionsButton).toBeDefined();
+    await act(async () => {
+      optionsButton?.click();
+    });
+
+    const slider = container.querySelector<HTMLInputElement>('input[type="range"]');
+    const numberInput = container.querySelector<HTMLInputElement>('input[type="number"]');
+    return { container, root, updateState, slider, numberInput };
+  }
+
+  /**
+   * Writes a value into a controlled input through the native setter so React sees the change.
+   *
+   * @param input - Target input element.
+   * @param value - Raw text to place in the input.
+   * @returns A promise resolved after React flushed the change.
+   */
+  async function typeIntoInput(input: HTMLInputElement, value: string) {
+    const nativeSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+    await act(async () => {
+      nativeSetter?.call(input, value);
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+  }
+
+  /** Removes a rendered panel from the document. */
+  async function cleanup(root: ReturnType<typeof createRoot>, container: HTMLElement) {
+    await act(async () => {
+      root.unmount();
+    });
+    container.remove();
+  }
+
+  it('derives slider bounds from the shared range and defaults to 6px', async () => {
+    const { container, root, slider, numberInput } = await renderFontOptions({ ...DEFAULT_POPUP_STATE });
+
+    expect(slider?.min).toBe('4');
+    expect(slider?.max).toBe('48');
+    expect(slider?.value).toBe('6');
+    expect(numberInput?.value).toBe('6');
+    expect(numberInput?.min).toBe('4');
+    expect(numberInput?.max).toBe('48');
+    const customBadge = Array.from(container.querySelectorAll('span')).find((span) => span.textContent === 'Custom');
+    expect(customBadge).toBeUndefined();
+
+    await cleanup(root, container);
+  });
+
+  it('commits an exact px typed into the numeric input', async () => {
+    const { root, container, updateState, numberInput } = await renderFontOptions({ ...DEFAULT_POPUP_STATE });
+    expect(numberInput).not.toBeNull();
+
+    await typeIntoInput(numberInput as HTMLInputElement, '40');
+
+    expect(updateState).toHaveBeenCalledWith({ renderFontMinSize: 40 });
+
+    await cleanup(root, container);
+  });
+
+  it('clamps a typed value above the shared max on blur', async () => {
+    const { root, container, updateState, numberInput } = await renderFontOptions({ ...DEFAULT_POPUP_STATE });
+    expect(numberInput).not.toBeNull();
+
+    await typeIntoInput(numberInput as HTMLInputElement, '99');
+    expect(updateState).not.toHaveBeenCalled();
+
+    await act(async () => {
+      numberInput?.dispatchEvent(new FocusEvent('focusout', { bubbles: true }));
+    });
+
+    expect(updateState).toHaveBeenCalledWith({ renderFontMinSize: 48 });
+
+    await cleanup(root, container);
+  });
+
+  it('shows the Custom badge for a non-default floor', async () => {
+    const { root, container } = await renderFontOptions({ ...DEFAULT_POPUP_STATE, renderFontMinSize: 40 });
+
+    const customBadge = Array.from(container.querySelectorAll('span')).find((span) => span.textContent === 'Custom');
+    expect(customBadge).toBeDefined();
+
+    await cleanup(root, container);
+  });
+});

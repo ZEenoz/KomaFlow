@@ -94,4 +94,31 @@ export const SUPPORTED_STUDIO_FILE_EXTENSIONS = [
  */
 export const STUDIO_IMAGE_INPUT_ACCEPT = 'image/png,image/jpeg,image/webp,image/avif,.png,.jpg,.jpeg,.webp,.avif';
 
+/**
+ * Canonical allowed range, in CSS pixels, for the user's minimum font size override
+ * (Popup > Render Font > Text Rendering Options > Min Font Size).
+ *
+ * Single source of truth per AGENTS.md §3: the popup slider, its numeric input, the
+ * background storage validator and `DEFAULT_POPUP_STATE` all derive their bounds and
+ * default from this object, so widening the range is a one-line change here.
+ *
+ * `default` doubles as a pipeline sentinel: the typeset fitter treats a value equal to it
+ * as "the user never overrode the floor" (`renderFontMinSize !== 6` checks in
+ * `PipelineOrchestrator` and `studioOcrTypeset`). Those offscreen readers compare against
+ * the literal `6`, not against this object, so changing `default` means updating
+ * `PipelineOrchestrator.ts`, `studioOcrTypeset.ts` and `src/content/index.tsx` as well.
+ * Keep it at the historical default so the sentinel and already-stored profiles keep
+ * their meaning.
+ */
+export const RENDER_FONT_MIN_SIZE_RANGE = {
+  /** Lowest floor the panel accepts, in px. */
+  min: 4,
+  /** Highest floor the panel accepts, in px. A floor above the bubble's fitted size overflows the balloon by design. */
+  max: 48,
+  /** Slider and numeric-input increment, in px. */
+  step: 1,
+  /** Presentational default; also the "no user override" pipeline sentinel. */
+  default: 6,
+} as const;
+
 

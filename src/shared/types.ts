@@ -2,6 +2,7 @@
  * Shared message types between Content, Background, and Offscreen contexts.
  */
 import { DEFAULT_SFX_POLICY, type SfxPolicyId } from './sfx/sfxPolicy';
+import { RENDER_FONT_MIN_SIZE_RANGE } from './constants';
 export type MessageType = 
   | 'TRANSLATE_IMAGE'    // Content -> Background
   | 'PROCESS_JOB'        // Background -> Offscreen (job queue dispatch)
@@ -265,6 +266,7 @@ export interface PopupState {
   renderFontItalic?: boolean;
   renderFontStrokeDisabled?: boolean;
   renderFontAlignment?: 'auto' | 'left' | 'center' | 'right';
+  /** Hard minimum font size floor in px; bounds live in {@link RENDER_FONT_MIN_SIZE_RANGE}. */
   renderFontMinSize?: number;
   bubbleMode: BubbleDetectionMode;
   /** How sound-effect lettering is handled; see `SFX_POLICIES`. */
@@ -306,7 +308,7 @@ export const DEFAULT_POPUP_STATE: PopupState = {
   renderFontItalic: false,
   renderFontStrokeDisabled: false,
   renderFontAlignment: 'auto',
-  renderFontMinSize: 6,
+  renderFontMinSize: RENDER_FONT_MIN_SIZE_RANGE.default,
   bubbleMode: 'off',
   sfxPolicy: DEFAULT_SFX_POLICY,
   historyRetention: '1week',

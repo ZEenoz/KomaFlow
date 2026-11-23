@@ -1,4 +1,5 @@
 import { HyphenationService, INSERTED_HYPHEN } from './hyphenation';
+import { SPACELESS_SCRIPT_RE } from './typography/kinsokuShori';
 
 /**
  * typesetLayout.ts
@@ -99,6 +100,98 @@ export const NO_LINE_START_RE = /^[.,!?:;…\-—―–ー－～)」』】》〉
 
 // Opening marks that bind forward to following word
 export const OPENING_MARK_RE = /^[¡¿([{«‹‘‚‛“„‟〈《「『【〔〖（［｛]/;
+
+// Unicode marks (Mn/Mc/Me) never open a line in any script: they modify the glyph before them.
+// Script-agnostic, so Thai tone marks and above/below vowels stay attached, and Lao, Khmer,
+// Burmese and Devanagari text wrapped by the no-space path keeps its clusters intact too.
+const COMBINING_MARK_RE = /\p{M}/u;
+
+// Thai spacing vowels written after their consonant (SARA A, SARA AA, SARA AM, LAKKHANGYAO) own a
+// full cell but still cannot open a line; they are not Unicode marks, so they are listed here.
+const THAI_TRAILING_VOWEL_RE = /[\u0E30\u0E32\u0E33\u0E45]/;
+
+// Thai leading vowels are written before the consonant they modify, so they must stay attached
+// to the glyph that follows them; a break right after a leading vowel would split the cluster.
+const THAI_LEADING_VOWEL_RE = /[\u0E40-\u0E44]/;
+
+// Contiguous Latin/digit runs inside a no-space script sentence stay atomic words (never diced
+// per character), matching the CJK tokenizer in fitFontSizeWithLines.
+const LATIN_RUN_RE = /[A-Za-z0-9'’-]/;
+
+/**
+ * Splits whitespace-free script text (Thai, Lao, Khmer, Burmese — {@link SPACELESS_SCRIPT_RE})
+ * into atomic wrap units, without ever inserting a hyphen.
+ *
+ * Units are contiguous slices of the source string, so every wrapped line stays a substring of
+ * the input (required by the clean-fit gate in {@link fitFontSizeWithLines}). A unit is one of:
+ * - a contiguous Latin/digit run (`[A-Za-z0-9'’-]+`), so embedded Latin words are never diced;
+ * - a script cluster: a base glyph plus every following glyph that cannot open a line (Unicode
+ *   marks and Thai trailing vowels), and any glyph pulled in by a preceding Thai leading vowel
+ *   (U+0E40..U+0E44);
+ * - a single punctuation or symbol character, bound backward when it is barred from starting a
+ *   line (Kinsoku Shori, {@link NO_LINE_START_RE}).
+ *
+ * Whitespace is insignificant inside these scripts (they have no inter-word spaces) and is kept
+ * as a suffix of the preceding unit, so the greedy wrapper can drop it at a line break.
+ *
+ * @param text - Paragraph text containing a no-space script.
+ * @returns Array of atomic wrap units, in source order; concatenating them reproduces the text
+ * with inter-word whitespace intact.
+ */
+export function tokenizeNoSpaceScript(text: string): string[] {
+  const tokens: string[] = [];
+  let latinRun = '';
+
+  /**
+   * Appends one unit, merging it backward when the orthography forbids starting a line with it.
+   *
+   * @param unit - Candidate wrap unit.
+   */
+  function pushUnit(unit: string): void {
+    if (!unit) return;
+    const lastIndex = tokens.length - 1;
+    if (lastIndex >= 0) {
+      const last = tokens[lastIndex];
+      const attachesBack =
+        COMBINING_MARK_RE.test(unit[0]) ||
+        THAI_TRAILING_VOWEL_RE.test(unit[0]) ||
+        THAI_LEADING_VOWEL_RE.test(last[last.length - 1]) ||
+        NO_LINE_START_RE.test(unit);
+      if (attachesBack) {
+        tokens[lastIndex] = `${last}${unit}`;
+        return;
+      }
+    }
+    tokens.push(unit);
+  }
+
+  /** Flushes the pending Latin/digit run as one atomic unit. */
+  function flushLatinRun(): void {
+    if (!latinRun) return;
+    const run = latinRun;
+    latinRun = '';
+    pushUnit(run);
+  }
+
+  for (const char of text) {
+    if (/\s/.test(char)) {
+      flushLatinRun();
+      if (tokens.length > 0) {
+        tokens[tokens.length - 1] += char;
+      }
+      continue;
+    }
+    if (LATIN_RUN_RE.test(char)) {
+      latinRun += char;
+      continue;
+    }
+    flushLatinRun();
+    pushUnit(char);
+  }
+  flushLatinRun();
+
+  return tokens;
+}
 
 // Common English prefixes and suffixes for syllable hyphenation
 const HYPHEN_PREFIXES = [
@@ -314,6 +407,28 @@ export function wrapText(
         }
       }
       if (current) lines.push(current);
+      continue;
+    }
+
+    // No-space cluster scripts (Thai, Lao, Khmer, Burmese) break between clusters with NO
+    // inserted hyphen: a hyphenated break is invalid orthography there, and it made every
+    // multi-line layout fail the clean-fit gate in fitFontSizeWithLines (Thai dialogue
+    // collapsed to the 6px floor). Latin words inside the sentence stay whole.
+    // The predicate is the narrow script set, not NO_SPACE_SCRIPT_RE: that one also matches
+    // fullwidth punctuation, which would drag Latin paragraphs off this branch's sibling.
+    if (SPACELESS_SCRIPT_RE.test(paragraph)) {
+      for (const token of tokenizeNoSpaceScript(paragraph)) {
+        const candidate = `${current}${token}`;
+        if (ctx.measureText(candidate).width <= maxWidth) {
+          current = candidate;
+          continue;
+        }
+        const line = current.trimEnd();
+        if (line) lines.push(line);
+        current = token.trimStart();
+      }
+      const line = current.trimEnd();
+      if (line) lines.push(line);
       continue;
     }
 
@@ -663,9 +778,16 @@ export function fitFontSizeWithLines(
   };
 
   const isCjk = CJK_REGEX.test(text);
+  // No-space cluster scripts (Thai, Lao, Khmer, Burmese) are tokenized per cluster exactly like
+  // the wrapper does, so Pass 1 measures the units that wrapText will actually break on. Without
+  // this, a whole Thai sentence counted as one unbreakable "word" and Pass 1 always failed.
+  // Same narrow predicate as the wrapper branch, so measurement and rendering never disagree.
+  const isClusterScript = !isCjk && SPACELESS_SCRIPT_RE.test(text);
   const rawWords = isCjk
     ? (text.match(/[\u3040-\u30ff\u31f0-\u31ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uac00-\ud7af\u1100-\u11ff\u3130-\u318f\u0900-\u097f\u0e00-\u0e7f\u0400-\u04ff\uff01-\uffee\u3000-\u303f]|[a-zA-Z0-9'’-]+|[^\s]/g) || [])
-    : text.split(/[\s\n]+/).filter(Boolean);
+    : isClusterScript
+      ? tokenizeNoSpaceScript(text)
+      : text.split(/[\s\n]+/).filter(Boolean);
   const words: string[] = [];
   for (const w of rawWords) {
     if (w.includes('-') && !w.startsWith('-') && !w.endsWith('-') && w.length >= 5) {

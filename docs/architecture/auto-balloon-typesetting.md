@@ -25,7 +25,7 @@ Balanced wrapping can form a diamond-like stanza, but the current strategy does 
 
 ## 3. Four Fitting Passes
 
-1. **Clean binary search:** Prefer whole-word layouts. Require each measured line to fit usable width (0.5px tolerance), total height to fit using `LINE_HEIGHT = 1.2`, and no newly inserted hyphen breaks.
+1. **Clean binary search:** Prefer whole-word layouts. Require each measured line to fit usable width (0.5px tolerance), total height to fit using `LINE_HEIGHT = 1.2`, and no newly inserted hyphen breaks. Space-free scripts satisfy this gate because they are never hyphenated at all: the wrapper breaks them between orthographic clusters (§4), so a multi-line Thai layout is a clean layout.
 2. **Tall-narrow floor search:** For usable `H/W >= 2`, probe a geometric size derived from width and area, bounded by the caller's ceiling. This is a candidate improvement search, not a blanket height-based ceiling.
 3. **Vertical-fill hyphenation:** If clean fitting fails or remains below 14px and the tall-box threshold is met, scan downward from a bounded candidate ceiling with discretionary hyphenation.
 4. **Fallback binary search:** Retry reflow under the width/height predicate. If no larger fit exists, retain the initialized 6px wrapped layout.
@@ -35,6 +35,8 @@ Balanced wrapping can form a diamond-like stanza, but the current strategy does 
 ## 4. Hyphenation & Script Routing
 
 `findHyphenationPoints()` consults the shared on-demand Liang dictionary service and retains its local fallback rules. Pattern assets live under `public/assets/hyphenation/`. Long-word logic uses the seven-character stem gate and measured discretionary-hyphen suffixes. Shared typography helpers heal typesetter-inserted hyphens before Studio reflow so resizing does not turn temporary syllable breaks into canonical dialogue.
+
+No-space scripts are a separate wrapping path, not a hyphenation policy. `wrapText()` checks `NO_SPACE_SCRIPT_RE` (imported from `src/offscreen/utils/typography/kinsokuShori.ts`) between the CJK and Latin branches and breaks text with `tokenizeNoSpaceScript()`: atomic units that are contiguous slices of the source (a Latin/digit run, a script cluster, or one punctuation character), never a hyphen. Clusters absorb any following Unicode mark (`\p{M}`) and Thai trailing vowels, and the consonant after a Thai leading vowel stays bound to it, so a line never opens with a bare mark or vowel. `fitFontSizeWithLines()` tokenizes the same way when the text is a no-space script, so Pass 1 measures the units the wrapper actually breaks on. The clean-fit invariant is therefore unchanged for Latin and CJK: no inserted hyphen is ever needed for these scripts, and none is allowed (Devlog 120).
 
 Non-Western output routing belongs to `renderTextBlocksBatch()` in `canvasTypesetting.ts`, not to a failed Auto Balloon strategy. The batch dispatcher selects the legacy orientation-aware path by target language; it does not wait for this strategy to fail.
 

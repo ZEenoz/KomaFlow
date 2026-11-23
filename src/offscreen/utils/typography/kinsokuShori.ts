@@ -16,6 +16,17 @@ export const BREAKABLE_DASH_RE = /[\-‐‒–—―]/;
 export const NO_SPACE_SCRIPT_RE = /[\u0E00-\u0EFF\u1000-\u109F\u1780-\u17FF\u2E80-\u303F\u3040-\u30FF\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF\uFE30-\uFE4F\uFF01-\uFF0F\uFF1A-\uFF20\uFF3B-\uFF40\uFF5B-\uFF9F]/;
 
 /**
+ * Unicode script ranges for writing systems whose words are not separated by spaces at all, so the
+ * only legal break is between orthographic clusters (Thai, Lao, Myanmar, Khmer).
+ *
+ * A strict subset of {@link NO_SPACE_SCRIPT_RE} on purpose. That regex also matches CJK and
+ * fullwidth punctuation, which have their own wrapping and Kinsoku paths; using it as a routing
+ * predicate would move an ordinary Latin paragraph onto the cluster wrapper just because it
+ * contains a fullwidth `！`, changing where its lines break.
+ */
+export const SPACELESS_SCRIPT_RE = /[\u0E00-\u0EFF\u1000-\u109F\u1780-\u17FF]/;
+
+/**
  * Checks if a character belongs to a script without inter-word whitespace (e.g. CJK, Thai).
  *
  * @param ch - Single character to inspect.

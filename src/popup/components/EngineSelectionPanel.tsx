@@ -16,6 +16,7 @@ import {
   orderEngines,
 } from '../../shared/engineOrdering';
 import HelpTooltip from './HelpTooltip';
+import { RENDER_FONT_MIN_SIZE_RANGE } from '../../shared/constants';
 
 export { RECOMMENDED_TRANSLATION_MODELS } from '../../shared/engineOrdering';
 
@@ -114,6 +115,46 @@ export default function EngineSelectionPanel({ state, updateState }: EngineSelec
 
   const [deletingEngineId, setDeletingEngineId] = useState<string | null>(null);
   const [deletionNotice, setDeletionNotice] = useState<string | null>(null);
+
+  /** Effective min font size floor in px, falling back to the shared catalog default. */
+  const renderFontMinSize = state.renderFontMinSize ?? RENDER_FONT_MIN_SIZE_RANGE.default;
+  /** In-progress numeric-input text, so partially typed values are not clamped mid-keystroke. */
+  const [renderFontMinSizeDraft, setRenderFontMinSizeDraft] = useState<string | null>(null);
+
+  /**
+   * Commits a typed minimum font size, clamped into {@link RENDER_FONT_MIN_SIZE_RANGE}.
+   *
+   * @param raw - Raw numeric-input text; non-numeric input reverts to the current floor.
+   * @returns void
+   */
+  const commitRenderFontMinSize = (raw: string): void => {
+    const parsed = Number.parseInt(raw, 10);
+    if (Number.isFinite(parsed)) {
+      const clamped = Math.min(
+        RENDER_FONT_MIN_SIZE_RANGE.max,
+        Math.max(RENDER_FONT_MIN_SIZE_RANGE.min, parsed)
+      );
+      if (clamped !== renderFontMinSize) updateState({ renderFontMinSize: clamped });
+    }
+    setRenderFontMinSizeDraft(null);
+  };
+
+  /**
+   * Keeps the typed draft and applies it immediately while it is inside the allowed range,
+   * so an exact px value takes effect without waiting for blur.
+   *
+   * @param raw - Raw numeric-input text.
+   * @returns void
+   */
+  const handleRenderFontMinSizeChange = (raw: string): void => {
+    setRenderFontMinSizeDraft(raw);
+    const parsed = Number.parseInt(raw, 10);
+    const isInsideRange =
+      Number.isFinite(parsed) &&
+      parsed >= RENDER_FONT_MIN_SIZE_RANGE.min &&
+      parsed <= RENDER_FONT_MIN_SIZE_RANGE.max;
+    if (isInsideRange && parsed !== renderFontMinSize) updateState({ renderFontMinSize: parsed });
+  };
 
   /**
    * Queues one model download through the background-owned RPC route.
@@ -1187,7 +1228,7 @@ export default function EngineSelectionPanel({ state, updateState }: EngineSelec
               className={`transition-transform duration-200 text-[var(--color-muted)] ${isOpenFontOptions ? 'rotate-90' : ''}`}
             />
             <span>Text Rendering Options</span>
-            {(state.renderFontBold || state.renderFontItalic || state.renderFontStrokeDisabled || (state.renderFontAlignment && state.renderFontAlignment !== 'auto') || (state.renderFontMinSize && state.renderFontMinSize !== 6)) && (
+            {(state.renderFontBold || state.renderFontItalic || state.renderFontStrokeDisabled || (state.renderFontAlignment && state.renderFontAlignment !== 'auto') || (state.renderFontMinSize !== undefined && state.renderFontMinSize !== RENDER_FONT_MIN_SIZE_RANGE.default)) && (
               <span className="text-[10px] font-semibold px-1.5 py-0.2 rounded bg-[var(--color-vellum)] text-[var(--color-editorial)] border border-[var(--color-editorial)]/40 ml-1">
                 Custom
               </span>
@@ -1268,23 +1309,46 @@ export default function EngineSelectionPanel({ state, updateState }: EngineSelec
                 </div>
               </div>
 
-              {/* Row 3: Minimum Font Size */}
-              <div className="flex items-center justify-between gap-3">
-                <span className="text-xs text-[var(--color-muted)] font-medium shrink-0">Min Font Size</span>
-                <div className="flex items-center gap-2 flex-1 max-w-[170px]">
-                  <input
-                    type="range"
-                    min={4}
-                    max={20}
-                    step={1}
-                    value={state.renderFontMinSize ?? 6}
-                    onChange={(e) => updateState({ renderFontMinSize: Number(e.target.value) })}
-                    className="w-full accent-[var(--color-editorial)] cursor-pointer"
-                  />
-                  <span className="text-xs font-mono font-semibold px-1.5 py-0.5 rounded bg-[var(--color-paper)] border border-[var(--color-dust)] min-w-[34px] text-center">
-                    {state.renderFontMinSize ?? 6}px
-                  </span>
+              {/* Row 3: Minimum Font Size (slider + exact px input sharing one range) */}
+              <div className="flex flex-col gap-1">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-xs text-[var(--color-muted)] font-medium shrink-0">Min Font Size</span>
+                  <div className="flex items-center gap-2 flex-1 max-w-[170px]">
+                    <input
+                      type="range"
+                      aria-label="Min Font Size"
+                      min={RENDER_FONT_MIN_SIZE_RANGE.min}
+                      max={RENDER_FONT_MIN_SIZE_RANGE.max}
+                      step={RENDER_FONT_MIN_SIZE_RANGE.step}
+                      value={renderFontMinSize}
+                      onChange={(e) => updateState({ renderFontMinSize: Number(e.target.value) })}
+                      className="w-full accent-[var(--color-editorial)] cursor-pointer"
+                    />
+                    <label className="flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-[var(--color-paper)] border border-[var(--color-dust)] focus-within:border-[var(--color-editorial)]">
+                      <input
+                        type="number"
+                        aria-label="Min Font Size in px"
+                        min={RENDER_FONT_MIN_SIZE_RANGE.min}
+                        max={RENDER_FONT_MIN_SIZE_RANGE.max}
+                        step={RENDER_FONT_MIN_SIZE_RANGE.step}
+                        value={renderFontMinSizeDraft ?? String(renderFontMinSize)}
+                        onChange={(e) => handleRenderFontMinSizeChange(e.target.value)}
+                        onBlur={(e) => commitRenderFontMinSize(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            commitRenderFontMinSize(e.currentTarget.value);
+                            e.currentTarget.blur();
+                          }
+                        }}
+                        className="w-9 bg-transparent text-right text-xs font-mono font-semibold text-[var(--color-ink)] focus:outline-none"
+                      />
+                      <span className="text-xs font-mono font-semibold text-[var(--color-muted)]">px</span>
+                    </label>
+                  </div>
                 </div>
+                <p className="text-[11px] leading-snug text-[var(--color-muted)]">
+                  Acts as a hard floor: a value larger than the size that fits the balloon forces the text to overflow the bubble.
+                </p>
               </div>
             </div>
           )}

@@ -6,9 +6,12 @@ import {
   fontSpec,
   decollideBoxes,
   isHardLineBreak,
+  tokenizeNoSpaceScript,
+  wrapText,
   NO_LINE_START_RE,
   OPENING_MARK_RE,
 } from './typesetLayout';
+import { INSERTED_HYPHEN } from './hyphenation';
 
 describe('typesetLayout', () => {
   describe('findHyphenationPoints', () => {
@@ -239,6 +242,275 @@ describe('typesetLayout', () => {
       expect(tight.size).toBeGreaterThanOrEqual(20);
       expect(mockCtx.font).toContain('italic ');
       expect(mockCtx.font).toContain('"DB HelvethaicaMon X Med"');
+    });
+  });
+
+  describe('no-space script (Thai) wrapping', () => {
+    /** Glyphs that may never open a wrapped line: Unicode marks plus Thai spacing vowels. */
+    const CLUSTER_START_BARRED_RE = /[\p{M}\u0E30\u0E32\u0E33\u0E45]/u;
+    /** Thai leading vowels (U+0E40..U+0E44) are written in front of the consonant they modify. */
+    const LEADING_VOWEL_RE = /[\u0E40-\u0E44]/;
+    /** Advance width of one non-mark Thai glyph as a fraction of the font size (mock metrics). */
+    const THAI_ADVANCE_EM = 0.55;
+    /** Thai line of 105 code points / 82 non-combining glyphs used for the 6px collapse report. */
+    const THAI_DIALOGUE =
+      'ฉันจะไม่ยอมให้เธอต้องเจ็บปวดอีกต่อไปไม่ว่าอะไรจะเกิดขึ้นก็ตามเพราะฉันสัญญากับเธอไว้แล้วว่าฉันจะไม่ทิ้งเธอ';
+
+    /**
+     * Builds a mock 2D context with Thai metrics: every non-mark glyph advances one fraction of
+     * the current font size, marks (U+0E31, U+0E34-U+0E3A, U+0E47-U+0E4E) advance nothing.
+     *
+     * @returns Mock context exposing a mutable `font` and `measureText`.
+     */
+    function createThaiCtx(): { font: string; measureText: (t: string) => { width: number } } {
+      const ctx = {
+        font: '16px sans-serif',
+        measureText(t: string): { width: number } {
+          const sizeMatch = ctx.font.match(/(\d+)px/);
+          const size = sizeMatch ? parseInt(sizeMatch[1], 10) : 16;
+          let width = 0;
+          for (const ch of t) {
+            width += /[\u0E31\u0E34-\u0E3A\u0E47-\u0E4E]/.test(ch) ? 0 : THAI_ADVANCE_EM * size;
+          }
+          return { width };
+        },
+      };
+      return ctx;
+    }
+
+    /**
+     * Asserts every wrapped line is legal Thai typesetting on its own.
+     *
+     * @param ctx - Measuring context used to verify line widths.
+     * @param lines - Wrapped lines to inspect.
+     * @param source - Original paragraph the lines were wrapped from.
+     * @param maxWidth - Wrapping width the lines must respect.
+     */
+    function expectLegalThaiLines(
+      ctx: { measureText: (t: string) => { width: number } },
+      lines: string[],
+      source: string,
+      maxWidth: number
+    ): void {
+      for (const line of lines) {
+        expect(line).not.toContain(INSERTED_HYPHEN);
+        expect(source).toContain(line);
+        expect(line.startsWith(' ')).toBe(false);
+        expect(line.endsWith(' ')).toBe(false);
+        expect(CLUSTER_START_BARRED_RE.test(line[0])).toBe(false);
+        expect(LEADING_VOWEL_RE.test(line[line.length - 1])).toBe(false);
+        expect(ctx.measureText(line).width).toBeLessThanOrEqual(maxWidth + 0.5);
+      }
+      expect(lines.join('').replace(/\s/g, '')).toBe(source.replace(/\s/g, ''));
+    }
+
+    it('tokenizes Thai into clusters that never open with a mark or a trailing vowel', () => {
+      const tokens = tokenizeNoSpaceScript('ฉันสัญญากับเธอ');
+      expect(tokens.join('')).toBe('ฉันสัญญากับเธอ');
+      for (const token of tokens) {
+        expect(token.trim().length).toBeGreaterThan(0);
+        expect(CLUSTER_START_BARRED_RE.test(token[0])).toBe(false);
+      }
+      // Marks ride on their base glyph: "ก้" is one unit, never "ก" + "้".
+      expect(tokenizeNoSpaceScript('ก้'.repeat(4)).every((token) => token.trim() === 'ก้')).toBe(true);
+      // A leading vowel must not be the last glyph of a unit ("เธ" + "อ", never a dangling "เ").
+      for (const token of tokenizeNoSpaceScript('เธอไป')) {
+        expect(LEADING_VOWEL_RE.test(token[token.length - 1])).toBe(false);
+      }
+    });
+
+    it('keeps embedded Latin words atomic inside a Thai sentence', () => {
+      const tokens = tokenizeNoSpaceScript('ฉันรัก BABYBOY มาก');
+      expect(tokens.map((token) => token.trim())).toContain('BABYBOY');
+      expect(tokens.join('')).toBe('ฉันรัก BABYBOY มาก');
+    });
+
+    it('wraps Thai without inserting any hyphen or splitting a cluster', () => {
+      for (const maxWidth of [60, 120, 160, 198]) {
+        const ctx = createThaiCtx();
+        const lines = wrapText(ctx, THAI_DIALOGUE, maxWidth);
+        expect(lines.length).toBeGreaterThan(1);
+        expectLegalThaiLines(ctx, lines, THAI_DIALOGUE, maxWidth);
+      }
+    });
+
+    it('preserves a hyphen that exists in the source text exactly once', () => {
+      const source = 'ฉันจะไม่ยอมแพ้-เด็ดขาด';
+      for (const maxWidth of [60, 120, 198]) {
+        const lines = wrapText(createThaiCtx(), source, maxWidth);
+        const joined = lines.join('').replace(/\s/g, '');
+        expect(joined).toBe(source);
+        expect(joined.match(/-/g)).toHaveLength(1);
+        expect(lines.some((line) => line.includes(INSERTED_HYPHEN))).toBe(false);
+      }
+    });
+  });
+
+  describe('no-space script (Thai) fitting', () => {
+    /** Advance width of one non-mark Thai glyph as a fraction of the font size (mock metrics). */
+    const THAI_ADVANCE_EM = 0.55;
+    /** Balloon inset applied by fitFontSizeWithLines. */
+    const BOX_INSET = 0.05;
+    /** Font size the pre-fix whole-paragraph tokenizer collapsed Thai dialogue into at 220x90. */
+    const PRE_FIX_FLOOR_PX = 6;
+    /** Thai line used for the 6px collapse report (105 code points, 82 non-combining glyphs). */
+    const THAI_DIALOGUE =
+      'ฉันจะไม่ยอมให้เธอต้องเจ็บปวดอีกต่อไปไม่ว่าอะไรจะเกิดขึ้นก็ตามเพราะฉันสัญญากับเธอไว้แล้วว่าฉันจะไม่ทิ้งเธอ';
+
+    /**
+     * Builds a mock 2D context with Thai metrics (one advance per non-mark glyph, none per mark).
+     *
+     * @returns Mock context exposing a mutable `font` and `measureText`.
+     */
+    function createThaiCtx(): { font: string; measureText: (t: string) => { width: number } } {
+      const ctx = {
+        font: '16px sans-serif',
+        measureText(t: string): { width: number } {
+          const sizeMatch = ctx.font.match(/(\d+)px/);
+          const size = sizeMatch ? parseInt(sizeMatch[1], 10) : 16;
+          let width = 0;
+          for (const ch of t) {
+            width += /[\u0E31\u0E34-\u0E3A\u0E47-\u0E4E]/.test(ch) ? 0 : THAI_ADVANCE_EM * size;
+          }
+          return { width };
+        },
+      };
+      return ctx;
+    }
+
+    it('fills a 220x90 balloon instead of collapsing to the 6px floor', () => {
+      const ctx = createThaiCtx();
+      const result = fitFontSizeWithLines(ctx, THAI_DIALOGUE, 'sans-serif', 220, 90, 24, 48);
+      expect(result.size).toBeGreaterThan(PRE_FIX_FLOOR_PX * 2);
+      expect(result.size).toBeGreaterThanOrEqual(14);
+      expect(result.lines.length).toBeGreaterThanOrEqual(3);
+      for (const line of result.lines) {
+        expect(THAI_DIALOGUE).toContain(line);
+        expect(line).not.toContain(INSERTED_HYPHEN);
+        expect(ctx.measureText(line).width).toBeLessThanOrEqual(220 * (1 - 2 * BOX_INSET) + 0.5);
+      }
+    });
+
+    it('scales Thai font size with the balloon instead of sticking at the floor', () => {
+      const medium = fitFontSizeWithLines(createThaiCtx(), THAI_DIALOGUE, 'sans-serif', 220, 160, 24, 48);
+      const large = fitFontSizeWithLines(createThaiCtx(), THAI_DIALOGUE, 'sans-serif', 420, 380, 24, 48);
+      expect(medium.size).toBeGreaterThanOrEqual(19);
+      expect(large.size).toBeGreaterThanOrEqual(40);
+      expect(large.size).toBeGreaterThan(medium.size);
+      expect(medium.size).toBeGreaterThan(PRE_FIX_FLOOR_PX * 2);
+    });
+
+    it('never leaves a Thai line starting with an orphan mark', () => {
+      const result = fitFontSizeWithLines(createThaiCtx(), THAI_DIALOGUE, 'sans-serif', 220, 90, 24, 48);
+      for (const line of result.lines.slice(1)) {
+        expect(/[\p{M}\u0E30\u0E32\u0E33\u0E45]/u.test(line[0])).toBe(false);
+      }
+    });
+  });
+
+  describe('Latin and CJK wrap/fit regression pins', () => {
+    /** Advance width of one glyph as a fraction of the font size (mock metrics used below). */
+    const HALF_EM_RATIO = 0.5;
+    /** English sample pinned to prove the Latin wrapping path is untouched. */
+    const LATIN_DIALOGUE =
+      'I will never let you get hurt again, no matter what happens, because I promised you that I would never leave you.';
+    /** Japanese sample pinned to prove the CJK path is untouched. */
+    const JAPANESE_DIALOGUE = '私はあなたを絶対に伤つけさせない、何があってもあなたを一人にはしないと約束したから。';
+
+    /**
+     * Builds a mock 2D context where every glyph advances half of the current font size.
+     *
+     * @returns Mock context exposing a mutable `font` and `measureText`.
+     */
+    function createHalfEmCtx(): { font: string; measureText: (t: string) => { width: number } } {
+      const ctx = {
+        font: '16px sans-serif',
+        measureText(t: string): { width: number } {
+          const sizeMatch = ctx.font.match(/(\d+)px/);
+          const size = sizeMatch ? parseInt(sizeMatch[1], 10) : 16;
+          return { width: t.length * (size * HALF_EM_RATIO) };
+        },
+      };
+      return ctx;
+    }
+
+    it('keeps the English fit and hyphenation output unchanged', () => {
+      const fitted = fitFontSizeWithLines(createHalfEmCtx(), LATIN_DIALOGUE, 'sans-serif', 220, 90, 24, 48);
+      expect(fitted.size).toBe(13);
+      expect(fitted.lines).toEqual([
+        'I will never let you get hurt',
+        'again, no matter what happens,',
+        'because I promised you that I',
+        'would never leave you.',
+      ]);
+
+      const wrapped = wrapText(createHalfEmCtx(), LATIN_DIALOGUE, 40);
+      expect(wrapped).toEqual([
+        'I',
+        'will',
+        'never',
+        'let',
+        'you',
+        'get',
+        'hurt',
+        'again,',
+        'no',
+        'matter',
+        'what',
+        `hap${INSERTED_HYPHEN}`,
+        'pens,',
+        `be${INSERTED_HYPHEN}`,
+        'cause',
+        'I',
+        `pro${INSERTED_HYPHEN}`,
+        'mised',
+        'you',
+        'that',
+        'I',
+        'would',
+        'never',
+        'leave',
+        'you.',
+      ]);
+      // Last-resort hyphenation discipline is intact: only long words are broken, never short ones.
+      expect(wrapped.some((line) => line === `let${INSERTED_HYPHEN}`)).toBe(false);
+      expect(wrapped.some((line) => line === `you${INSERTED_HYPHEN}`)).toBe(false);
+    });
+
+    it('keeps Latin text on the Latin wrapper when it contains fullwidth punctuation', () => {
+      // The no-space cluster wrapper does not bind opening marks the way the Latin branch does, so
+      // routing an English sentence there would change where its lines break. A fullwidth mark is
+      // not a reason to leave the Latin path (Devlog 120).
+      const ascii = 'He shouted "Stop!" and ran away quickly.';
+      const fullwidth = 'He shouted "Stop\uff01" and ran away quickly.';
+      for (const maxWidth of [60, 90, 140]) {
+        const latinLines = wrapText(createHalfEmCtx(), ascii, maxWidth);
+        const fullwidthLines = wrapText(createHalfEmCtx(), fullwidth, maxWidth);
+        // Same break positions, so normalise the single glyph that differs before comparing.
+        expect(fullwidthLines.map((line) => line.replace(/\uff01/g, '!'))).toEqual(latinLines);
+      }
+    });
+
+    it('keeps the Japanese fit and Kinsoku wrap output unchanged', () => {
+      const fitted = fitFontSizeWithLines(createHalfEmCtx(), JAPANESE_DIALOGUE, 'sans-serif', 220, 90, 24, 48);
+      expect(fitted.size).toBe(22);
+      expect(fitted.lines).toEqual([
+        '私はあなたを絶対に伤つけさせ',
+        'ない、何があってもあなたを一',
+        '人にはしないと約束したから。',
+      ]);
+
+      const wrapped = wrapText(createHalfEmCtx(), JAPANESE_DIALOGUE, 64);
+      expect(wrapped).toEqual([
+        '私はあなたを絶対',
+        'に伤つけさせない、',
+        '何があってもあな',
+        'たを一人にはしな',
+        'いと約束したから。',
+      ]);
+      for (const line of wrapped.slice(1)) {
+        expect(NO_LINE_START_RE.test(line[0])).toBe(false);
+      }
     });
   });
 
