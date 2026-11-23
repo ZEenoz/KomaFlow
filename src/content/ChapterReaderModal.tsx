@@ -13,6 +13,7 @@ import {
   Sparkles,
   Check,
   Loader,
+  RefreshCw,
 } from 'lucide-react';
 
 export type ReaderViewMode = 'webtoon' | 'single' | 'double';
@@ -37,6 +38,7 @@ export interface ChapterReaderModalProps {
   title?: string;
   onExportZip?: () => void;
   onTranslateAll?: (urls: string[]) => void;
+  onRescan?: () => void | Promise<void>;
   isTranslatingChapter?: boolean;
 }
 
@@ -61,6 +63,7 @@ export default function ChapterReaderModal({
   title,
   onExportZip,
   onTranslateAll,
+  onRescan,
   isTranslatingChapter = false,
 }: ChapterReaderModalProps) {
   const [viewMode, setViewMode] = useState<ReaderViewMode>('webtoon');
@@ -70,10 +73,22 @@ export default function ChapterReaderModal({
   const [currentIndex, setCurrentIndex] = useState(0);
   const [activeScrollPage, setActiveScrollPage] = useState(1);
   const [isExporting, setIsExporting] = useState(false);
+  const [isRescanning, setIsRescanning] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
   const totalPages = pages.length;
+
+  useEffect(() => {
+    if (!isOpen) return;
+    setCurrentIndex(0);
+    setActiveScrollPage(1);
+  }, [isOpen, title]);
+
+  useEffect(() => {
+    setCurrentIndex((prev) => (totalPages === 0 ? 0 : Math.min(prev, totalPages - 1)));
+    setActiveScrollPage((prev) => (totalPages === 0 ? 1 : Math.min(Math.max(1, prev), totalPages)));
+  }, [totalPages]);
   const untranslatedUrls = pages.filter((p) => !p.isTranslated).map((p) => p.url);
   const translatedCount = pages.filter((p) => p.isTranslated).length;
   const isAllTranslated = totalPages > 0 && translatedCount === totalPages;
@@ -352,8 +367,41 @@ export default function ChapterReaderModal({
           </button>
         </div>
 
-        {/* Right: Translate All / Width / Flip / Direction / ZIP */}
+          {/* Right: Rescan / Translate All / Width / Flip / Direction / ZIP */}
         <div className="kites-reader-header-right" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          {onRescan && (
+            <button
+              onClick={async () => {
+                if (isRescanning) return;
+                setIsRescanning(true);
+                try {
+                  await onRescan();
+                } finally {
+                  setIsRescanning(false);
+                }
+              }}
+              disabled={isRescanning}
+              className="kites-reader-btn"
+              style={{
+                padding: '5px 10px',
+                borderRadius: '6px',
+                fontSize: '11px',
+                fontWeight: 500,
+                display: 'flex',
+                alignItems: 'center',
+                gap: '5px',
+                cursor: isRescanning ? 'wait' : 'pointer',
+                background: 'rgba(255, 255, 255, 0.08)',
+                border: '1px solid rgba(255, 255, 255, 0.12)',
+                color: '#ffffff',
+                opacity: isRescanning ? 0.65 : 1,
+              }}
+              title="Rescan page for missing or lazy-loaded chapter images"
+            >
+              <RefreshCw size={12} className={isRescanning ? 'animate-spin' : ''} />
+              <span>{isRescanning ? 'Scanning…' : 'Rescan'}</span>
+            </button>
+          )}
           {/* Top-to-Bottom Translate All Action Button */}
           {isAllTranslated ? (
             <div

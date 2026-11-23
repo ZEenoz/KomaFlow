@@ -4,6 +4,7 @@ import {
   sortScannedImages,
   filterOutlierThumbnails,
   filterResolutionOutliers,
+  forcePromoteLazyAttributes,
   scanChapterPages,
   type ScannedPageImage,
 } from './scanner';
@@ -99,5 +100,45 @@ describe('scanner unit tests', () => {
     expect(scanned[1].url).toBe('https://example.com/chapter/2.jpg');
     expect(scanned[1].isTranslated).toBe(true);
     expect(scanned[1].translatedUrl).toBe('blob:translated-2');
+  });
+
+  it('discovers unloaded lazy 0x0 chapter images and promotes eager/srcset attributes', () => {
+    const reader = document.createElement('div');
+    reader.className = 'chapter-reader';
+
+    const loaded = document.createElement('img');
+    loaded.src = 'https://example.com/ch/page-1.jpg';
+    vi.spyOn(loaded, 'getBoundingClientRect').mockReturnValue({
+      x: 0, y: 0, top: 0, left: 0, right: 800, bottom: 1200, width: 800, height: 1200, toJSON: () => ({}),
+    } as DOMRect);
+
+    const unloadedLazy = document.createElement('img');
+    unloadedLazy.loading = 'lazy';
+    unloadedLazy.setAttribute('data-src', 'https://example.com/ch/page-2.jpg');
+    unloadedLazy.setAttribute('data-srcset', 'https://example.com/ch/page-2.jpg 1200w');
+    vi.spyOn(unloadedLazy, 'getBoundingClientRect').mockReturnValue({
+      x: 0, y: 0, top: 0, left: 0, right: 0, bottom: 0, width: 0, height: 0, toJSON: () => ({}),
+    } as DOMRect);
+
+    const navIcon = document.createElement('img');
+    navIcon.src = 'https://example.com/assets/avatar.png';
+    vi.spyOn(navIcon, 'getBoundingClientRect').mockReturnValue({
+      x: 0, y: 0, top: 0, left: 0, right: 32, bottom: 32, width: 32, height: 32, toJSON: () => ({}),
+    } as DOMRect);
+
+    reader.append(loaded, unloadedLazy, navIcon);
+    document.body.appendChild(reader);
+
+    const beforePromote = scanChapterPages(document);
+    expect(beforePromote.map((p) => p.url)).toEqual([
+      'https://example.com/ch/page-1.jpg',
+      'https://example.com/ch/page-2.jpg',
+    ]);
+
+    const promoted = forcePromoteLazyAttributes(document);
+    expect(promoted).toBeGreaterThanOrEqual(2);
+    expect(unloadedLazy.loading).toBe('eager');
+    expect(unloadedLazy.getAttribute('srcset')).toBe('https://example.com/ch/page-2.jpg 1200w');
+    expect(unloadedLazy.src).toBe('https://example.com/ch/page-2.jpg');
   });
 });

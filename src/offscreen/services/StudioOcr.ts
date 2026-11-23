@@ -382,7 +382,7 @@ export async function runStudioOcr(
       mode: object.typesetMode, isVertical: object.isVertical, contourPoints: object.contourPoints,
     })), popupState, (width, height) => createSafeCanvas(width, height)?.ctx ?? null);
     return { inpaintedPatchBase64, textObjects: textObjects.map((object, index) => ({
-      ...object, fontFamily: typography.fontFamily, bold: typography.bold, targetLang: typography.targetLang,
+      ...object, fontFamily: typography.fontFamily, bold: typography.bold, italic: typography.italic, targetLang: typography.targetLang,
       ...(typography.layouts[index] ? { fontSize: typography.layouts[index]!.fontSize,
         lines: typography.layouts[index]!.lines, positionedLines: typography.layouts[index]!.positionedLines,
         // These lines are renderer output, so a later contour/caption resize may re-flow them.

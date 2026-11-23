@@ -239,8 +239,10 @@ describe('font family propagation', () => {
 
     const result = renderRegionDefault(drawCtx, metadata, metadata.polygon, 16);
     expect(result).not.toBeNull();
-    // Route 1 Auto Balloon XianScan fits with minSize = floor(16 * 0.5) = 8
-    expect(result!.fontSize).toBe(8);
+    // Route 1 Auto Balloon XianScan fits with 8px (Linux) / 9px (Windows Arial) and never emits positionedLines
+    expect(result!.fontSize).toBeGreaterThanOrEqual(8);
+    expect(result!.fontSize).toBeLessThanOrEqual(9);
+    expect(result!.positionedLines).toBeUndefined();
     expect(result!.lines.length).toBeGreaterThanOrEqual(4);
   });
 
@@ -272,5 +274,54 @@ describe('font family propagation', () => {
       const screenX = tlX + drawnX;
       expect(screenX).toBeGreaterThanOrEqual(4);
     }
+  });
+
+  it('propagates italic, minFontSize floor, and alignment to positioned and balloon draws', () => {
+    const drawCtx = createCanvas(400, 300).getContext('2d');
+    const fillSpy = vi.spyOn(drawCtx, 'fillText');
+
+    // Balloon single-line with minFontSize = 20 and italic = true
+    const balloonRegion: any = {
+      ...region(80, 40, 12, 'Source', 'Short line'),
+      alignment: 'right',
+      fixed: false,
+      typesetMode: 'balloon',
+    };
+    const balloonRes = renderRegionDefault(
+      drawCtx,
+      balloonRegion,
+      balloonRegion.polygon,
+      12,
+      undefined,
+      '"DB HelvethaicaMon X Med", sans-serif',
+      false,
+      undefined,
+      'en',
+      undefined,
+      true,
+      20
+    );
+    expect(balloonRes).not.toBeNull();
+    expect(balloonRes!.fontSize).toBeGreaterThanOrEqual(20);
+    expect(drawCtx.font).toContain('italic ');
+
+    fillSpy.mockClear();
+    // Fixed contour mode with left vs right alignment and minFontSize = 18
+    const fixedLeft: any = {
+      ...region(220, 120, 12, 'Source', 'Hi\nthere'),
+      alignment: 'left',
+      fixed: true,
+      typesetMode: 'simple',
+    };
+    const leftRes = renderRegionDefault(drawCtx, fixedLeft, fixedLeft.polygon, 12, undefined, 'sans-serif', false, undefined, 'en', undefined, true, 18);
+    expect(leftRes).not.toBeNull();
+    expect(leftRes!.fontSize).toBeGreaterThanOrEqual(18);
+    const leftX = fillSpy.mock.calls.map((c) => c[1] as number);
+
+    fillSpy.mockClear();
+    const fixedRight: any = { ...fixedLeft, alignment: 'right' };
+    renderRegionDefault(drawCtx, fixedRight, fixedRight.polygon, 12, undefined, 'sans-serif', false, undefined, 'en', undefined, true, 18);
+    const rightX = fillSpy.mock.calls.map((c) => c[1] as number);
+    expect(Math.max(...rightX)).toBeGreaterThan(Math.min(...leftX));
   });
 });

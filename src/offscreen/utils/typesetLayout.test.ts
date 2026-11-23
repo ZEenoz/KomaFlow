@@ -3,6 +3,7 @@ import {
   findHyphenationPoints,
   balancedWrapText,
   fitFontSizeWithLines,
+  fontSpec,
   decollideBoxes,
   isHardLineBreak,
   NO_LINE_START_RE,
@@ -212,6 +213,32 @@ describe('typesetLayout', () => {
       expect(res.size).toBeGreaterThanOrEqual(13);
       expect(res.lines.length).toBeGreaterThanOrEqual(8);
       expect(res.lines.some((l) => l.includes('reinfor-') || l.includes('reinforcements'))).toBe(true);
+    });
+
+    it('enforces explicit minFontSize floor and italic/quoted fontSpec generation', () => {
+      const spec = fontSpec(16, 'DB HelvethaicaMon X Med', 'Thai sample', undefined, true, true);
+      expect(spec).toContain('italic bold 16px "DB HelvethaicaMon X Med", ');
+      expect(spec).toContain('sans-serif');
+
+      const tight = fitFontSizeWithLines(
+        mockCtx,
+        'This line would normally shrink below twenty pixels in a small box.',
+        'DB HelvethaicaMon X Med',
+        80,
+        60,
+        14,
+        24,
+        0.05,
+        undefined,
+        false,
+        undefined,
+        'en',
+        true,
+        20
+      );
+      expect(tight.size).toBeGreaterThanOrEqual(20);
+      expect(mockCtx.font).toContain('italic ');
+      expect(mockCtx.font).toContain('"DB HelvethaicaMon X Med"');
     });
   });
 

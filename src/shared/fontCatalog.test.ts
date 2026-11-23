@@ -26,7 +26,7 @@ describe('library font selection passthrough', () => {
   it('normalizes and resolves font: selections to the registered family', () => {
     const value = `${CUSTOM_FONT_PREFIX}Bangers`;
     expect(normalizeRenderFontPresetId(value)).toBe(value);
-    expect(resolveRenderFontFamily(value)).toBe('Bangers');
+    expect(resolveRenderFontFamily(value)).toBe('"Bangers", sans-serif');
   });
 
   it('strips unsafe characters that could corrupt the canvas font shorthand', () => {

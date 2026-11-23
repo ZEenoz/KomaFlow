@@ -51,6 +51,7 @@ describe('renderFontPresets', () => {
     expect(resolveRenderFontFamily('serif')).toBe('Georgia, "Times New Roman", serif');
     expect(resolveRenderFontFamily('monospace')).toBe('"Courier New", Courier, monospace');
     expect(resolveRenderFontFamily('standard')).toBe('sans-serif');
+    expect(resolveRenderFontFamily('font:DB HelvethaicaMon X Med')).toBe('"DB HelvethaicaMon X Med", sans-serif');
     expect(resolveRenderFontFamily('invalid-id')).toBe('sans-serif');
     expect(resolveRenderFontFamily(undefined)).toBe('sans-serif');
   });

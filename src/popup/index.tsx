@@ -194,7 +194,7 @@ function PopupApp() {
       {/* Header */}
       <div className="flex justify-between items-center mb-2.5 p-3.5 pb-0">
         <h1 className="text-xl font-bold font-display tracking-tight text-[var(--color-editorial)] flex items-center gap-2">
-          Kites
+          KomaFlow
           {!state.isExtensionEnabled ? (
             <span className="text-xs font-normal text-[var(--color-muted)] px-2 py-0.5 border border-[var(--color-dust)] rounded-full">OFF</span>
           ) : isCurrentDomainDisabled ? (
@@ -205,7 +205,7 @@ function PopupApp() {
           <button 
             onClick={() => updateState({ isExtensionEnabled: !state.isExtensionEnabled })}
             className={`p-1.5 rounded transition-colors hover:bg-[var(--color-vellum)] cursor-pointer`}
-            title={state.isExtensionEnabled ? "Disable Kites" : "Enable Kites"}
+            title={state.isExtensionEnabled ? "Disable KomaFlow" : "Enable KomaFlow"}
           >
             <Power size={18} className={state.isExtensionEnabled ? "text-[var(--color-editorial)]" : "text-[var(--color-muted)]"} />
           </button>
@@ -257,7 +257,7 @@ function PopupApp() {
                 ? 'bg-amber-500/10 border-amber-500/30 text-amber-500 hover:bg-amber-500/20'
                 : 'bg-[var(--color-paper)] border-[var(--color-dust)] border-opacity-40 text-[var(--color-muted)] hover:text-red-500 hover:border-red-400'
             }`}
-            title={isCurrentDomainDisabled ? `Re-enable Kites on ${currentDomain}` : `Disable Kites on ${currentDomain}`}
+            title={isCurrentDomainDisabled ? `Re-enable KomaFlow on ${currentDomain}` : `Disable KomaFlow on ${currentDomain}`}
           >
             {isCurrentDomainDisabled ? 'Disabled · Enable' : 'Disable on site'}
           </button>

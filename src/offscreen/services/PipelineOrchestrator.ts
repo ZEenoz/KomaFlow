@@ -12,6 +12,7 @@ import { inpaintRegistry } from '../engines/inpaint/inpaintRegistry';
 import { InpaintCacheManager } from './InpaintCacheManager';
 import { renderTextBlocksBatch, measureBubbleLayoutFontSize, getRenderedBlockGeometry, LANGUAGE_ORIENTATION_PRESETS, type TextBlockItem, type RenderedBlockInfo } from '../utils/canvasTypesetting';
 import { detectBlockTextColorsFromContext, type DetectedTextColor } from '../utils/textColorDetection';
+import { ensureFontsRegistered } from '../../shared/fontLibrary';
 import { resolveRenderFontFamily } from '../../shared/renderFontPresets';
 import { isBubbleGpuAvailable, isColorGpuAvailable } from '../../shared/utils/hardwareUtils';
 import { BubbleManager, bubbleManager as defaultBubbleManager } from './BubbleManager';
@@ -214,6 +215,13 @@ export class PipelineOrchestrator {
       const ocrTier: OcrTier = popupState?.activeOcrId || 'v6-small';
       const resolvedFontFamily = resolveRenderFontFamily(popupState?.renderFontPresetId);
       const renderFontBold = popupState?.renderFontBold === true;
+      const renderFontItalic = popupState?.renderFontItalic === true;
+      const renderFontMinSize =
+        typeof popupState?.renderFontMinSize === 'number' &&
+        Number.isFinite(popupState.renderFontMinSize) &&
+        popupState.renderFontMinSize !== 6
+          ? popupState.renderFontMinSize
+          : undefined;
 
       // 2. Fetch image from DB
       const imageRecord = await db.images.where('jobId').equals(jobId).first();
@@ -521,11 +529,17 @@ export class PipelineOrchestrator {
       // fonts.ready only waits for faces already triggered to load, so explicitly
       // resolve the preset family — otherwise measurement can silently run with a
       // fallback font and collapse the fit (font metrics drive every line break).
+      if (typeof indexedDB !== 'undefined') {
+        await ensureFontsRegistered().catch(() => {});
+      }
       if (typeof document !== 'undefined' && document.fonts) {
         const families = resolvedFontFamily.split(',').map((f) => f.trim().replace(/^["']|["']$/g, ''));
         for (const family of families) {
           if (family && !['sans-serif', 'serif', 'monospace', 'cursive', 'fantasy'].includes(family.toLowerCase())) {
             await document.fonts.load(`16px "${family}"`).catch(() => {});
+            await document.fonts.load(`bold 16px "${family}"`).catch(() => {});
+            await document.fonts.load(`italic 16px "${family}"`).catch(() => {});
+            await document.fonts.load(`italic bold 16px "${family}"`).catch(() => {});
           }
         }
         await document.fonts.ready;
@@ -577,7 +591,7 @@ export class PipelineOrchestrator {
             strokeColor: popupState?.renderFontStrokeDisabled ? 'transparent' : detectedColor?.strokeColor,
             fontSize: ocrResult.fontSizes
               ? Math.max(popupState?.renderFontMinSize ?? 6, ocrResult.fontSizes[i])
-              : undefined,
+              : renderFontMinSize,
             angle: ocrResult.angles ? ocrResult.angles[i] : undefined,
             // Default renderer inputs: original source text (length-ratio expansion) and merged
             // source line count (Cotrans used_rows). ocrResult.texts holds the pre-translation text.
@@ -620,27 +634,17 @@ export class PipelineOrchestrator {
                   contourPoints,
                 }
               : { ...block, isRounded: false, borderRadius: 0, typesetMode: 'simple' as const };
-            const fitted = popupState?.renderFontMinSize !== undefined
-              ? measureBubbleLayoutFontSize(
-                  ctx,
-                  blockWithCurvature,
-                  proposed,
-                  resolvedFontFamily,
-                  renderFontBold,
-                  targetLang,
-                  popupState.renderFontMinSize,
-                  { width: proposed.w, height: proposed.h }
-                )
-              : measureBubbleLayoutFontSize(
-                  ctx,
-                  blockWithCurvature,
-                  proposed,
-                  resolvedFontFamily,
-                  renderFontBold,
-                  targetLang,
-                  undefined,
-                  { width: proposed.w, height: proposed.h }
-                );
+            const fitted = measureBubbleLayoutFontSize(
+              ctx,
+              blockWithCurvature,
+              proposed,
+              resolvedFontFamily,
+              renderFontBold,
+              targetLang,
+              renderFontMinSize,
+              { width: proposed.w, height: proposed.h },
+              ...(renderFontItalic ? [true] as const : [])
+            );
             const ok = fitted > 0;
             console.log(`[PipelineOrchestrator accept #${index}] ok=${ok} fitted=${fitted} text="${block.text}" proposed=${JSON.stringify(proposed)}`);
             return ok;
@@ -680,7 +684,9 @@ export class PipelineOrchestrator {
           height: pageHeight
         },
         resolvedFontFamily,
-        renderFontBold
+        renderFontBold,
+        renderFontItalic,
+        renderFontMinSize
       );
 
       // Map render results (final font size actually drawn) back to OCR indices

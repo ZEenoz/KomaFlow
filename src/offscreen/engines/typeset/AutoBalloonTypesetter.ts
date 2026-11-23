@@ -28,7 +28,9 @@ export function measureDefaultLayout(
   fontFamily: string = DEFAULT_RENDER_FONT_FAMILY,
   isBold: boolean = false,
   measureCache?: MeasureCache,
-  targetLang: string = 'en'
+  targetLang: string = 'en',
+  isItalic: boolean = false,
+  minFontSizeFloor?: number
 ): ReturnType<typeof fitFontSizeWithLines> {
   return fitFontSizeWithLines(
     ctx,
@@ -45,7 +47,9 @@ export function measureDefaultLayout(
     undefined,
     isBold,
     measureCache,
-    targetLang
+    targetLang,
+    isItalic,
+    minFontSizeFloor
   );
 }
 
@@ -59,17 +63,23 @@ export class AutoBalloonTypesetter implements ITypesetStrategy {
     ctx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D,
     options: TypesetOptions
   ): TypesetResult | null {
+    const startSize = Math.max(options.minFontSize ?? 14, options.minFontSizeFloor ?? 0);
+    const effectiveCap = options.maxFontSizeCap !== undefined && options.minFontSizeFloor !== undefined
+      ? Math.max(options.maxFontSizeCap, options.minFontSizeFloor)
+      : options.maxFontSizeCap;
     const fitted = measureDefaultLayout(
       ctx as any,
       text,
       container.w,
       container.h,
-      options.minFontSize ?? 14,
-      options.maxFontSizeCap,
+      startSize,
+      effectiveCap,
       options.fontFamily,
       options.isBold,
       options.measureCache,
-      options.targetLang ?? 'en'
+      options.targetLang ?? 'en',
+      options.isItalic ?? false,
+      options.minFontSizeFloor
     );
 
     if (!fitted || !fitted.lines || fitted.lines.length === 0) return null;
@@ -82,7 +92,8 @@ export class AutoBalloonTypesetter implements ITypesetStrategy {
       container.w,
       container.h,
       options.fontFamily,
-      options.isBold ?? false
+      options.isBold ?? false,
+      options.isItalic ?? false
     );
 
     return {

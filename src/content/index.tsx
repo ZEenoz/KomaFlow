@@ -13,7 +13,7 @@ import {
 } from './chapterZip';
 import ChapterReaderModal, { type ChapterReaderPage } from './ChapterReaderModal';
 import ChapterReaderFloatingPill from './ChapterReaderFloatingPill';
-import { scanChapterPages, fastScrollPreload } from './scanner';
+import { scanChapterPages, fastScrollPreload, forcePromoteLazyAttributes } from './scanner';
 import { handleReadingKeydown, handleReadingKeyup, handleReadingCommand, type ReadingShortcutActions } from './readingShortcuts';
 import {
   normalizeSelection,
@@ -1207,6 +1207,9 @@ function GlobalOverlay() {
   const activeImgRef = useRef(activeImg);
   const translatingUrlsRef = useRef(translatingUrls);
   const siteRulesRef = useRef<SiteSelectorRule[]>([]);
+  const renderConfigVersionRef = useRef<number>(1);
+  const renderConfigSignatureRef = useRef<string | null>(null);
+  const lastChapterHrefRef = useRef<string>(typeof window !== 'undefined' ? window.location.href : '');
   // Last known pointer position for scroll-driven hover re-resolution (scroll fires no
   // mouse events, so the hover target must be re-derived from the last cursor position).
   const lastCursorPositionRef = useRef<{ x: number; y: number } | null>(null);
@@ -1220,6 +1223,19 @@ function GlobalOverlay() {
 
   /** Scans the document for all comic chapter pages and keeps translation states updated. */
   const refreshChapterPages = useCallback(() => {
+    const currentHref = typeof window !== 'undefined' ? window.location.href : '';
+    const chapterChanged = lastChapterHrefRef.current !== currentHref;
+    if (chapterChanged) {
+      lastChapterHrefRef.current = currentHref;
+      setIsTranslatingChapter(false);
+      setIsPillDismissed(false);
+    }
+
+    const customSelector = getActiveCustomSelector();
+    if (isReaderOpen || Boolean(customSelector) || hasMangaReaderContainer(document)) {
+      forcePromoteLazyAttributes(document);
+    }
+
     const isTranslatedCheck = (url: string) => {
       const reg = translatedRegistry.get(url);
       return {
@@ -1227,39 +1243,120 @@ function GlobalOverlay() {
         translatedUrl: reg?.translatedUrl,
       };
     };
-    const scanned = scanChapterPages(document, getActiveCustomSelector(), isTranslatedCheck);
-    setChapterPages(scanned);
+    const scanned = scanChapterPages(document, customSelector, isTranslatedCheck);
+    setChapterPages((prev) => {
+      if (chapterChanged || prev.length === 0) return scanned;
+      const prevByKey = new Map<string, ChapterReaderPage>();
+      for (const page of prev) {
+        prevByKey.set(page.id, page);
+        prevByKey.set(page.url, page);
+      }
+      return scanned.map((page) => {
+        if (page.isTranslated) {
+          return { ...page, status: 'completed' as const };
+        }
+        const prior = prevByKey.get(page.id) ?? prevByKey.get(page.url);
+        if (prior && (prior.status === 'queued' || prior.status === 'processing' || prior.status === 'error')) {
+          return { ...page, status: prior.status };
+        }
+        return page;
+      });
+    });
     return scanned;
-  }, []);
+  }, [isReaderOpen]);
+
+  const handleRescanChapter = useCallback(async () => {
+    forcePromoteLazyAttributes(document);
+    await fastScrollPreload(document, getActiveCustomSelector());
+    refreshChapterPages();
+  }, [refreshChapterPages]);
 
   useEffect(() => {
     if (!isEnabled) return;
-    if (!isReaderOpen && !isCustomReaderRef.current) {
+    if (!isCustomReaderRef.current) {
       refreshChapterPages();
     }
 
     let scrollTimeoutId: number | null = null;
+    let mutationTimeoutId: number | null = null;
+
     const handleScroll = () => {
-      if (isReaderOpen || isCustomReaderRef.current) return;
+      if (isCustomReaderRef.current) return;
       if (scrollTimeoutId !== null) window.clearTimeout(scrollTimeoutId);
       scrollTimeoutId = window.setTimeout(() => {
         scrollTimeoutId = null;
-        if (!isReaderOpen && !isCustomReaderRef.current) refreshChapterPages();
+        if (!isCustomReaderRef.current) refreshChapterPages();
       }, CHAPTER_SCROLL_SCAN_DEBOUNCE_MS);
     };
 
+    const scheduleMutationScan = () => {
+      if (isCustomReaderRef.current || isSelfMutating) return;
+      const isReaderContext = isReaderOpen
+        || Boolean(getActiveCustomSelector())
+        || hasMangaReaderContainer(document)
+        || chapterPagesCountRef.current >= 1
+        || lastChapterHrefRef.current !== window.location.href;
+      if (!isReaderContext) return;
+      if (mutationTimeoutId !== null) window.clearTimeout(mutationTimeoutId);
+      mutationTimeoutId = window.setTimeout(() => {
+        mutationTimeoutId = null;
+        if (!isCustomReaderRef.current) refreshChapterPages();
+      }, 400);
+    };
+
+    const handleSpaNavigation = () => {
+      if (!isCustomReaderRef.current && lastChapterHrefRef.current !== window.location.href) {
+        refreshChapterPages();
+      }
+    };
+
+    const handleImgLoad = (event: Event) => {
+      if (event.target instanceof HTMLImageElement) {
+        scheduleMutationScan();
+      }
+    };
+
+    const observer = typeof MutationObserver !== 'undefined'
+      ? new MutationObserver((mutations) => {
+          for (const m of mutations) {
+            if (m.type === 'childList' && m.addedNodes.length > 0) {
+              scheduleMutationScan();
+              return;
+            }
+            if (m.type === 'attributes' && m.target instanceof HTMLImageElement) {
+              scheduleMutationScan();
+              return;
+            }
+          }
+        })
+      : null;
+
+    const observeTarget = document.body || document.documentElement;
+    if (observer && observeTarget) {
+      observer.observe(observeTarget, {
+        childList: true,
+        subtree: true,
+        attributes: true,
+        attributeFilter: ['src', 'data-src', 'data-original', 'data-lazy-src', 'srcset', 'data-srcset'],
+      });
+    }
+
     window.addEventListener('scroll', handleScroll, { passive: true });
+    window.addEventListener('popstate', handleSpaNavigation);
+    window.addEventListener('hashchange', handleSpaNavigation);
+    document.addEventListener('load', handleImgLoad, true);
 
     // Only run recurring scans on recognized manga reader pages (custom rule, reader container,
-    // or already detected >= 2 chapter pages). Non-reader sites like X.com/Twitter are skipped to prevent idle lag.
-    // The page count is read through a ref so a growing chapter does not tear down and
-    // recreate the interval and scroll listener on every detected page.
+    // open reader, SPA navigation, or >= 1 detected page). Non-reader feeds stay idle.
     const interval = setInterval(() => {
       if (typeof document !== 'undefined' && document.hidden) return;
-      if (isReaderOpen || isCustomReaderRef.current) return;
+      if (isCustomReaderRef.current) return;
+      const urlChanged = lastChapterHrefRef.current !== window.location.href;
       const isReaderSite = Boolean(getActiveCustomSelector())
         || hasMangaReaderContainer(document)
-        || chapterPagesCountRef.current >= 2;
+        || chapterPagesCountRef.current >= 1
+        || isReaderOpen
+        || urlChanged;
       if (isReaderSite) {
         refreshChapterPages();
       }
@@ -1267,8 +1364,13 @@ function GlobalOverlay() {
 
     return () => {
       clearInterval(interval);
+      observer?.disconnect();
       window.removeEventListener('scroll', handleScroll);
+      window.removeEventListener('popstate', handleSpaNavigation);
+      window.removeEventListener('hashchange', handleSpaNavigation);
+      document.removeEventListener('load', handleImgLoad, true);
       if (scrollTimeoutId !== null) window.clearTimeout(scrollTimeoutId);
+      if (mutationTimeoutId !== null) window.clearTimeout(mutationTimeoutId);
     };
   }, [isEnabled, isReaderOpen, refreshChapterPages]);
 
@@ -1355,6 +1457,7 @@ function GlobalOverlay() {
         }
       } else {
         isCustomReaderRef.current = false;
+        forcePromoteLazyAttributes(document);
         refreshChapterPages();
         setIsReaderOpen(true);
       }
@@ -1412,12 +1515,16 @@ function GlobalOverlay() {
     const target = image ?? resolveTargetMedia(srcUrl);
     const overlayImage = image ?? (target ? { ...target, overlayId: getOverlayId(target.surfaceElement) } : undefined);
     const cachedRecord = translatedRegistry.get(srcUrl);
+    const cacheFresh =
+      cachedRecord?.renderConfigVersion === undefined ||
+      cachedRecord.renderConfigVersion === renderConfigVersionRef.current;
     // If translation was already completed in this session and cached in registry, but the host site
     // just loaded or refreshed the raw image (e.g. single-page reader navigated back), re-apply instantly!
     const targetEl = target?.sourceElement || target?.imgElement;
     if (
       cachedRecord &&
       cachedRecord.translatedUrl &&
+      cacheFresh &&
       target &&
       targetEl &&
       targetEl.getAttribute('data-kites-translated') !== 'true'
@@ -1661,6 +1768,7 @@ function GlobalOverlay() {
       startAreaSelection: () => setIsSnipping(true),
       repeatLastScreenCrop,
       openChapterReader: () => {
+        forcePromoteLazyAttributes(document);
         refreshChapterPages();
         setIsReaderOpen(true);
       },
@@ -1716,9 +1824,26 @@ function GlobalOverlay() {
 
   // Load user settings and react to popup updates.
   useEffect(() => {
+    const getRenderConfigSignature = (state: PopupState): string => JSON.stringify([
+      state.renderFontPresetId ?? 'comic',
+      state.renderFontBold ?? false,
+      state.renderFontItalic ?? false,
+      state.renderFontStrokeDisabled ?? false,
+      state.renderFontAlignment ?? 'auto',
+      state.renderFontMinSize ?? 6,
+      state.targetLang ?? 'en',
+      state.bubbleMode ?? 'heuristic',
+      state.activeInpaintId ?? 'simple',
+    ]);
+
     const applyState = (state: PopupState) => {
       cachedSiteRules = state.siteRules || [];
       siteRulesRef.current = state.siteRules || [];
+      const nextSig = getRenderConfigSignature(state);
+      if (renderConfigSignatureRef.current !== null && renderConfigSignatureRef.current !== nextSig) {
+        renderConfigVersionRef.current += 1;
+      }
+      renderConfigSignatureRef.current = nextSig;
       const currentHost = window.location.hostname;
       const disabled = isDomainDisabled(currentHost, state.disabledDomains);
       setIsEnabled((state.isExtensionEnabled ?? true) && !disabled);
@@ -1802,7 +1927,13 @@ function GlobalOverlay() {
       console.log(`[Content Script] Received translated image for: ${originalUrl}`);
       const target = resolveTargetMedia(originalUrl);
       // Archive completed translation before requiring a DOM target; detached pages still enter the registry.
-      const record = translatedRegistry.complete(originalUrl, bakedBase64, jobId, target ?? undefined);
+      const record = translatedRegistry.complete(
+        originalUrl,
+        bakedBase64,
+        jobId,
+        target ?? undefined,
+        renderConfigVersionRef.current
+      );
 
       if (!record) {
         if (translatedRegistry.isLimitReached()) {
@@ -2325,6 +2456,7 @@ function GlobalOverlay() {
           await chapterExporter.exportChapter(recordsToExport);
         }}
         onTranslateAll={handleTranslateChapter}
+        onRescan={handleRescanChapter}
         isTranslatingChapter={isTranslatingChapter}
       />
 
@@ -2334,6 +2466,7 @@ function GlobalOverlay() {
           pageCount={chapterPages.length}
           onOpen={() => {
             isCustomReaderRef.current = false;
+            forcePromoteLazyAttributes(document);
             refreshChapterPages();
             setIsReaderOpen(true);
           }}

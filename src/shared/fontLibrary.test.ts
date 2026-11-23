@@ -1,16 +1,26 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { downloadCatalogFont, preloadFontFamilies, sha256Hex } from './fontLibrary';
+import {
+  deleteFont,
+  downloadCatalogFont,
+  ensureFontsRegistered,
+  preloadFontFamilies,
+  registerFontFace,
+  sha256Hex,
+} from './fontLibrary';
 import { FONT_CATALOG, type FontCatalogEntry } from './fontCatalog';
 
 // db is stubbed: the service must persist through db.fonts.put and register in-document.
 const putMock = vi.fn(async (record: unknown) => record);
+const toArrayMock = vi.fn(async (): Promise<Array<{ id: string; family: string; label: string; data: ArrayBuffer }>> => []);
+const getMock = vi.fn(async (_id: string): Promise<{ id: string; family: string; label: string; data: ArrayBuffer } | undefined> => undefined);
+const deleteMock = vi.fn(async (_id: string) => undefined);
 vi.mock('../db', () => ({
   db: {
     fonts: {
       put: (record: unknown) => putMock(record),
-      get: vi.fn(),
-      delete: vi.fn(),
-      toArray: vi.fn(async () => []),
+      get: (id: string) => getMock(id),
+      delete: (id: string) => deleteMock(id),
+      toArray: () => toArrayMock(),
     },
   },
 }));
@@ -33,8 +43,10 @@ vi.stubGlobal('FontFace', class {
 });
 // document.fonts.load stands in for the browser's explicit face requests;
 // preloadFontFamilies must call it per family because canvas text never triggers loads.
+const fontAddMock = vi.fn();
+const fontDeleteMock = vi.fn();
 const fontLoadMock = vi.fn(async (_spec: string = '') => [] as unknown[]);
-vi.stubGlobal('document', { fonts: { add: vi.fn(), load: fontLoadMock, ready: Promise.resolve() } });
+vi.stubGlobal('document', { fonts: { add: fontAddMock, delete: fontDeleteMock, load: fontLoadMock, ready: Promise.resolve() } });
 
 const fixtureBytes = new TextEncoder().encode('kites');
 // sha256("kites"), precomputed with shasum -a 256
@@ -104,6 +116,39 @@ describe('fontLibrary', () => {
     it('resolves when a face fails to load so the stack falls back instead of blocking', async () => {
       fontLoadMock.mockRejectedValueOnce(new Error('missing face'));
       await expect(preloadFontFamilies(['"Absent Font"'])).resolves.toBeUndefined();
+    });
+  });
+
+  describe('ensureFontsRegistered incremental updates', () => {
+    beforeEach(() => {
+      toArrayMock.mockReset();
+      getMock.mockReset();
+      deleteMock.mockReset();
+      fontAddMock.mockClear();
+      fontDeleteMock.mockClear();
+    });
+
+    it('registers newly imported fonts across repeated ensureFontsRegistered calls and unregisters deleted ones', async () => {
+      await ensureFontsRegistered();
+      fontAddMock.mockClear();
+      fontDeleteMock.mockClear();
+
+      toArrayMock.mockResolvedValueOnce([
+        { id: 'imported-1', family: 'DB HelvethaicaMon X Med', label: 'DB HelvethaicaMon X Med', data: fixtureBytes.buffer as ArrayBuffer },
+      ]);
+      await ensureFontsRegistered();
+      expect(fontAddMock).toHaveBeenCalledTimes(1);
+
+      // Re-registering same family with a new id replaces the old FontFace
+      await registerFontFace('DB HelvethaicaMon X Med', fixtureBytes.buffer as ArrayBuffer, 'imported-2');
+      expect(fontDeleteMock).toHaveBeenCalledTimes(1);
+      expect(fontAddMock).toHaveBeenCalledTimes(2);
+
+      // Deleting removes the registered face from document.fonts
+      getMock.mockResolvedValueOnce({ id: 'imported-2', family: 'DB HelvethaicaMon X Med', label: 'DB HelvethaicaMon X Med', data: fixtureBytes.buffer as ArrayBuffer });
+      await deleteFont('imported-2');
+      expect(deleteMock).toHaveBeenCalledWith('imported-2');
+      expect(fontDeleteMock).toHaveBeenCalledTimes(2);
     });
   });
 });

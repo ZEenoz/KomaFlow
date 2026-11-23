@@ -121,7 +121,9 @@ export function renderRegionDefault(
   isBold: boolean = false,
   measureCache?: MeasureCache,
   targetLang: string = 'en',
-  frame?: { width: number; height: number }
+  frame?: { width: number; height: number },
+  isItalic: boolean = false,
+  minFontSize?: number
 ): DefaultRenderResult | null {
   const [tl, tr, br, bl] = dstPoints;
   const normH = dist({ x: (tl.x + bl.x) / 2, y: (tl.y + bl.y) / 2 }, { x: (tr.x + br.x) / 2, y: (tr.y + br.y) / 2 });
@@ -153,6 +155,10 @@ export function renderRegionDefault(
     targetCenterY = polyCentroidY - tl.y;
   }
 
+  const effectiveMinFont = typeof minFontSize === 'number' && Number.isFinite(minFontSize) ? minFontSize : undefined;
+  const effectiveMaxCap = maxFontSizeCap !== undefined && effectiveMinFont !== undefined
+    ? Math.max(maxFontSizeCap, effectiveMinFont)
+    : maxFontSizeCap;
   const containerBox: BoxRect = { x: 0, y: 0, w: frame?.width ?? normH, h: frame?.height ?? normV };
   const typesetRes = strategy.typeset(
     region.translation,
@@ -161,10 +167,14 @@ export function renderRegionDefault(
     ctx,
     {
       fontFamily: fontFamily || DEFAULT_RENDER_FONT_FAMILY,
-      minFontSize: isFixed ? MINIMUM_READABLE_FONT_SIZE : (fontSize > 0 ? fontSize : MINIMUM_READABLE_FONT_SIZE),
-      maxFontSizeCap,
+      minFontSize: isFixed
+        ? (effectiveMinFont ?? MINIMUM_READABLE_FONT_SIZE)
+        : (fontSize > 0 ? Math.max(fontSize, effectiveMinFont ?? 0) : (effectiveMinFont ?? MINIMUM_READABLE_FONT_SIZE)),
+      minFontSizeFloor: effectiveMinFont,
+      maxFontSizeCap: effectiveMaxCap,
       targetLang,
       isBold,
+      isItalic,
       targetCenterY,
       measureCache,
       frame: frame ?? { width: normH, height: normV }
@@ -180,7 +190,7 @@ export function renderRegionDefault(
   const drawableLines = fitted.lines.filter((line) => line.trim());
   if (drawableLines.length === 0) return null;
 
-  const drawFont = fontSpec(fitted.size, fontFamily, drawableLines.join(''), undefined, isBold);
+  const drawFont = fontSpec(fitted.size, fontFamily, drawableLines.join(''), undefined, isBold, isItalic);
   ctx.save();
   ctx.font = drawFont;
   const widths = drawableLines.map((line) => ctx.measureText(line).width);
@@ -213,22 +223,38 @@ export function renderRegionDefault(
   ctx.fillStyle = fg;
   ctx.lineJoin = 'round';
   ctx.miterLimit = 2;
+  const computeLineX = (lineIdx: number): number => {
+    const positioned = hasPositionedLines ? fitted.positionedLines?.[lineIdx] : undefined;
+    if (positioned) {
+      if (region.alignment === 'left') return positioned.x;
+      if (region.alignment === 'right') return positioned.x + (positioned.width - widths[lineIdx]);
+      return positioned.x + (positioned.width - widths[lineIdx]) / 2;
+    }
+    let lineX: number;
+    if (region.alignment === 'left') {
+      const insetLeft = normH * 0.05;
+      lineX = maxLineWidth <= normH - insetLeft * 2 ? insetLeft : (normH - maxLineWidth) / 2;
+    } else if (region.alignment === 'right') {
+      const insetRight = normH * 0.05;
+      lineX = maxLineWidth <= normH - insetRight * 2
+        ? normH - insetRight - widths[lineIdx]
+        : (normH - maxLineWidth) / 2 + (maxLineWidth - widths[lineIdx]);
+    } else if (region.alignment === 'center') {
+      lineX = (normH - widths[lineIdx]) / 2;
+    } else {
+      lineX = (normH - maxLineWidth) / 2;
+    }
+    if (tl.x + lineX < 4) {
+      lineX = 4 - tl.x;
+    }
+    return lineX;
+  };
+
   if (bg) {
     ctx.strokeStyle = bg;
     ctx.lineWidth = strokeWidth;
     for (let i = 0; i < drawableLines.length; i++) {
-      let lineX = (normH - maxLineWidth) / 2;
-      if (region.alignment === 'center') {
-        lineX += (maxLineWidth - widths[i]) / 2;
-      } else if (region.alignment === 'right') {
-        lineX += maxLineWidth - widths[i];
-      }
-      if (hasPositionedLines && fitted.positionedLines?.[i]) {
-        lineX = fitted.positionedLines[i].x + (fitted.positionedLines[i].width - widths[i]) / 2;
-      }
-      if (!hasPositionedLines && tl.x + lineX < 4) {
-        lineX = 4 - tl.x;
-      }
+      const lineX = computeLineX(i);
       const positioned = hasPositionedLines ? fitted.positionedLines?.[i] : undefined;
       const lineY = positioned?.baseline ?? positioned?.y ?? startY + i * lineStep;
       ctx.textBaseline = positioned?.baseline !== undefined ? 'alphabetic' : 'top';
@@ -237,18 +263,7 @@ export function renderRegionDefault(
   }
 
   for (let i = 0; i < drawableLines.length; i++) {
-    let lineX = (normH - maxLineWidth) / 2;
-    if (region.alignment === 'center') {
-      lineX += (maxLineWidth - widths[i]) / 2;
-    } else if (region.alignment === 'right') {
-      lineX += maxLineWidth - widths[i];
-    }
-    if (hasPositionedLines && fitted.positionedLines?.[i]) {
-      lineX = fitted.positionedLines[i].x + (fitted.positionedLines[i].width - widths[i]) / 2;
-    }
-    if (!hasPositionedLines && tl.x + lineX < 4) {
-      lineX = 4 - tl.x;
-    }
+    const lineX = computeLineX(i);
     const positioned = hasPositionedLines ? fitted.positionedLines?.[i] : undefined;
     const lineY = positioned?.baseline ?? positioned?.y ?? startY + i * lineStep;
     ctx.textBaseline = positioned?.baseline !== undefined ? 'alphabetic' : 'top';

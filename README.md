@@ -2,12 +2,13 @@
 
 [English](README.md) | [简体中文](README.zh-CN.md) | [Tiếng Việt](README.vi.md) | [日本語](README.ja.md)
 
-# 🪁 Kites
+# 🪁 KomaFlow
 
 ### Read Any Manga in Your Language. Directly in Your Browser.
 **Zero Python • Zero Servers • 100% Private In-Browser Extension AI Translation**
 
-[![Chrome Web Store](https://img.shields.io/badge/Chrome_Web_Store-Free_Install-4285F4.svg?style=flat-square&logo=googlechrome&logoColor=white)](https://chromewebstore.google.com/detail/pcaokchkdgnmfgjkljfpghlfohbdjcmj?utm_source=item-share-cb)
+> Forked from **[Unheat/Kites](https://github.com/Unheat/Kites)** (GPL-3.0) with improved custom/imported WebFont registration & rendering, minimum font size / italic / alignment controls, and more reliable Page & Chapter Reader scanning.
+
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg?style=flat-square)](LICENSE)
 [![Chrome MV3](https://img.shields.io/badge/Chrome-Manifest%20V3-success.svg?style=flat-square&logo=googlechrome&logoColor=white)](manifest.json)
 [![WebGPU](https://img.shields.io/badge/Hardware-WebGPU%20Accelerated-orange.svg?style=flat-square&logo=webgpu&logoColor=white)](https://developer.mozilla.org/en-US/docs/Web/API/WebGPU_API)
@@ -16,30 +17,26 @@
 <br/>
 
 <p align="center">
-  <a href="https://chromewebstore.google.com/detail/pcaokchkdgnmfgjkljfpghlfohbdjcmj?utm_source=item-share-cb">
-    <img src="https://img.shields.io/badge/Available_in_the-Chrome_Web_Store-4285F4?style=for-the-badge&logo=googlechrome&logoColor=white" alt="Available in the Chrome Web Store" height="42" />
-  </a>
-  &nbsp;&nbsp;
-  <a href="https://github.com/Unheat/Kites/releases/latest">
+  <a href="https://github.com/ZEenoz/KomaFlow/releases/latest">
     <img src="https://img.shields.io/badge/GitHub_Releases-Download_.zip-24292e?style=for-the-badge&logo=github&logoColor=white" alt="Download Release .zip" height="42" />
   </a>
 </p>
 
 <br/>
 
-[![Kites Hero Banner](./README_images/Gemini_Generated_Image_f7lh52f7lh52f7lh.jpeg)](./README_images/Gemini_Generated_Image_f7lh52f7lh52f7lh.jpeg)
+[![KomaFlow Hero Banner](./README_images/Gemini_Generated_Image_f7lh52f7lh52f7lh.jpeg)](./README_images/Gemini_Generated_Image_f7lh52f7lh52f7lh.jpeg)
 
 </div>
 
 ---
 
-## 💡 Why Kites?
+## 💡 Why KomaFlow?
 
 Traditional manga translators require installing complex Python scripts, gigabytes of CUDA packages, or uploading your private reading history to third-party cloud servers.
 
-**Kites changes that.** It is a lightweight Chrome extension that runs state-of-the-art vision and language models **directly on your graphics card via WebGPU**.
+**KomaFlow changes that.** It is a lightweight Chrome extension that runs state-of-the-art vision and language models **directly on your graphics card via WebGPU**.
 
-- ⚡ **Zero Setup:** Install with 1-click from the [Chrome Web Store](https://chromewebstore.google.com/detail/pcaokchkdgnmfgjkljfpghlfohbdjcmj?utm_source=item-share-cb) and start reading immediately. No terminal, no Python, no dependencies.
+- ⚡ **Zero Setup:** Load the unpacked build or release archive in Chrome and start reading immediately. No terminal, no Python, no dependencies.
 - 🔒 **100% Local & Private:** Optical character recognition (OCR) and background cleaning happen on your device. Your images never leave your browser.
 - 🎨 **Intelligent Background Repair:** AI inpainting erases foreign text cleanly while preserving linework, screentones, and textures.
 - ✍️ **Natural Typesetting:** Automatically measures speech balloons, balances line breaks, fits font sizes, and adapts font colors.
@@ -60,14 +57,14 @@ Traditional manga translators require installing complex Python scripts, gigabyt
 <table>
   <tr>
     <th width="50%" align="center">Original Chinese</th>
-    <th width="50%" align="center">Kites Translated + Colorized</th>
+    <th width="50%" align="center">KomaFlow Translated + Colorized</th>
   </tr>
   <tr>
     <td align="center">
       <img src="./README_images/input/color-bubble-original.jpg" alt="Original grayscale Chinese manga page" width="100%" />
     </td>
     <td align="center">
-      <img src="./README_images/result/color-bubble.png" alt="Kites fully translated and colorized English manga page with speech balloon wrapping" width="100%" />
+      <img src="./README_images/result/color-bubble.png" alt="KomaFlow fully translated and colorized English manga page with speech balloon wrapping" width="100%" />
     </td>
   </tr>
 </table>
@@ -80,14 +77,14 @@ Traditional manga translators require installing complex Python scripts, gigabyt
 <table>
   <tr>
     <th width="50%" align="center">Original Japanese</th>
-    <th width="50%" align="center">Kites Translated</th>
+    <th width="50%" align="center">KomaFlow Translated</th>
   </tr>
   <tr>
     <td align="center">
       <img src="./README_images/input/demo2.jpeg" alt="Original Japanese Manga" width="100%" />
     </td>
     <td align="center">
-      <img src="./README_images/result/demo2_result.png" alt="Kites English Translation" width="100%" />
+      <img src="./README_images/result/demo2_result.png" alt="KomaFlow English Translation" width="100%" />
     </td>
   </tr>
 </table>
@@ -100,14 +97,14 @@ Traditional manga translators require installing complex Python scripts, gigabyt
 <table>
   <tr>
     <th width="50%" align="center">Original Japanese</th>
-    <th width="50%" align="center">Kites Translated</th>
+    <th width="50%" align="center">KomaFlow Translated</th>
   </tr>
   <tr>
     <td align="center">
       <img src="./README_images/input/demo7.jpg" alt="Original Japanese Manga" width="100%" />
     </td>
     <td align="center">
-      <img src="./README_images/result/demo7_result.png" alt="Kites Vietnamese Translation" width="100%" />
+      <img src="./README_images/result/demo7_result.png" alt="KomaFlow Vietnamese Translation" width="100%" />
     </td>
   </tr>
 </table>
@@ -120,7 +117,7 @@ Traditional manga translators require installing complex Python scripts, gigabyt
 Hover over any comic panel on Twitter/X, Pixiv, or manga sites. An unobtrusive floating badge appears using CSS Anchor Positioning—click it to translate dialogue directly inside the artwork with zero copy-pasting.
 
 <div align="center">
-  <img src="./README_images/UI-feature/hover-inplace-preview.png" alt="Kites In-Page Hover Translation Button" width="620px" />
+  <img src="./README_images/UI-feature/hover-inplace-preview.png" alt="KomaFlow In-Page Hover Translation Button" width="620px" />
 </div>
 
 - 🖱️ **Hover:** Translate instantly by hovering over any comic panel.
@@ -136,7 +133,7 @@ Hover over any comic panel on Twitter/X, Pixiv, or manga sites. An unobtrusive f
 
 Read entire manga or webtoon chapters in one distraction-free view with automatic batch detection, continuous vertical webtoon mode, multi-page translation, and offline ZIP export:
 
-[![Kites Chapter Reader](./README_images/UI-feature/reader.jpg)](./README_images/UI-feature/reader.png)
+[![KomaFlow Chapter Reader](./README_images/UI-feature/reader.jpg)](./README_images/UI-feature/reader.png)
 
 - **Fast Scan:** Automatically auto-scrolls and queues all lazy-loaded manga panels across chapter pages.
 - **Flexible Reader Modes:** Seamlessly switch between Webtoon continuous vertical strips, Single page, and Double spread layouts.
@@ -145,11 +142,11 @@ Read entire manga or webtoon chapters in one distraction-free view with automati
 
 ---
 
-## 🛠️ Built-in Kites Studio
+## 🛠️ Built-in KomaFlow Studio
 
-Need to polish a scanlation or adjust phrasing? Open the full-screen **Kites Studio** straight from the extension.
+Need to polish a scanlation or adjust phrasing? Open the full-screen **KomaFlow Studio** straight from the extension.
 
-[![Kites Studio](./README_images/UI-feature/kite_studio_editing.jpg)](./README_images/UI-feature/studio-editor.png)
+[![KomaFlow Studio](./README_images/UI-feature/kite_studio_editing.jpg)](./README_images/UI-feature/studio-editor.png)
 
 - **Direct Inline Editing:** Double-click any speech balloon to edit dialogue directly in place with subpixel vertical centering and live typesetting reflow.
 - **Interactive Canvas:** Drag and resize speech bubbles with 8-point handles.
@@ -173,13 +170,13 @@ Customize target languages, neural OCR models, and inpainting algorithms from th
   </tr>
   <tr>
     <td align="center">
-      <img src="./README_images/UI-feature/main-panel.jpg" alt="Kites Main Popup" width="95%" />
+      <img src="./README_images/UI-feature/main-panel.jpg" alt="KomaFlow Main Popup" width="95%" />
     </td>
     <td align="center">
-      <img src="./README_images/UI-feature/reader-panel.jpg" alt="Kites Chapter Reader and Scanner Panel" width="95%" />
+      <img src="./README_images/UI-feature/reader-panel.jpg" alt="KomaFlow Chapter Reader and Scanner Panel" width="95%" />
     </td>
     <td align="center">
-      <img src="./README_images/UI-feature/setting-panel.jpg" alt="Kites Settings Panel" width="95%" />
+      <img src="./README_images/UI-feature/setting-panel.jpg" alt="KomaFlow Settings Panel" width="95%" />
     </td>
   </tr>
 </table>
@@ -204,42 +201,25 @@ Customize target languages, neural OCR models, and inpainting algorithms from th
 
 ## 🚀 Quick Start & Installation
 
-### Option 1: Chrome Web Store (Recommended • 1-Click Install)
-
-The official and easiest way to install Kites. Includes automatic background updates and Google Web Store security review:
-
-<div align="left">
-  <a href="https://chromewebstore.google.com/detail/pcaokchkdgnmfgjkljfpghlfohbdjcmj?utm_source=item-share-cb">
-    <img src="https://img.shields.io/badge/Add_to_Chrome-Free_Install-4285F4?style=for-the-badge&logo=googlechrome&logoColor=white" alt="Add to Chrome" height="38" />
-  </a>
-</div>
-
-1. Open **[Kites on the Chrome Web Store](https://chromewebstore.google.com/detail/pcaokchkdgnmfgjkljfpghlfohbdjcmj?utm_source=item-share-cb)**.
-2. Click **Add to Chrome** and confirm the prompt.
-3. Pin **Kites** to your browser toolbar for easy access.
-4. Browse any manga or comic page (on Twitter/X, Pixiv, MangaDex, etc.) and hover over a panel to translate!
-
----
-
-### Option 2: Pre-Built Zip (Manual Unpacked — Zero Terminal Required)
+### Option 1: Pre-Built Zip (Manual Unpacked — Zero Terminal Required)
 
 For offline environments, manual testing, or loading specific releases:
 
-1. Download **[`kites.zip`](https://github.com/Unheat/Kites/releases/latest)** from the latest GitHub Release.
+1. Download the release archive from **[ZEenoz/KomaFlow Releases](https://github.com/ZEenoz/KomaFlow/releases/latest)**.
 2. Unzip the downloaded `.zip` file into a folder on your computer.
 3. In Chrome, open `chrome://extensions/`.
 4. Enable **Developer mode** (toggle in the top-right corner).
 5. Click **Load unpacked** and select the unzipped folder.
-6. Pin **Kites** to your browser toolbar and start reading immediately!
+6. Pin **KomaFlow** to your browser toolbar and start reading immediately!
 
 ---
 
-### Option 3: Build from Source (Developers)
+### Option 2: Build from Source (Developers)
 
 ```bash
 # 1. Clone repository
-git clone https://github.com/Unheat/Kites.git
-cd Kites
+git clone https://github.com/ZEenoz/KomaFlow.git
+cd KomaFlow
 
 # 2. Install dependencies & build extension
 npm ci
@@ -249,7 +229,7 @@ npm run build
 1. In Chrome, open `chrome://extensions/`.
 2. Enable **Developer mode** (top-right toggle).
 3. Click **Load unpacked** and select the generated `dist/` folder.
-4. Pin **Kites** to your toolbar and start reading!
+4. Pin **KomaFlow** to your toolbar and start reading!
 
 ---
 
@@ -258,16 +238,16 @@ npm run build
 We warmly welcome contributions from developers, translators, and comic lovers!
 
 - 📖 **[Documentation Hub](docs/README.md)** — Architectural diagrams, pipeline specifications, and runtime contracts.
-- 📐 **[Interactive Pipeline Map](docs/workflow.html)** — Standalone interactive visualization of Kites' detection, inpainting, and typesetting algorithm.
+- 📐 **[Interactive Pipeline Map](docs/workflow.html)** — Standalone interactive visualization of KomaFlow's detection, inpainting, and typesetting algorithm.
 - 🛠️ **[Contribution Guide](CONTRIBUTING.md)** — How to set up your dev environment, run tests, and submit PRs.
 
 ---
 
 ## 📜 License & Acknowledgements
 
-Kites is licensed under the **[GNU General Public License v3.0](LICENSE)**.
+KomaFlow is forked from **[Unheat/Kites](https://github.com/Unheat/Kites)** and licensed under the **[GNU General Public License v3.0](LICENSE)**.
 
-Heartfelt thanks to the incredible open-source projects that made Kites possible:
+Heartfelt thanks to **Unheat/Kites** and the incredible open-source projects that made this possible:
 - **[manga-image-translator (Cotrans)](https://github.com/zyddnys/manga-image-translator):** Groundbreaking spatial text grouping and typesetting algorithms.
 - **[xianscan-rust](https://github.com/ArbenApura/xianscan-rust):** Dynamic patch inpainting architectures and OCR noise filters.
 - **[koharu](https://github.com/koharu-rs/koharu):** Contour typesetting core — DP line breaking, contour font search, and hyphenation recovery ported 1:1.
@@ -284,5 +264,5 @@ Full license texts, pinned revisions, and ported-functionality details: [THIRD_P
 ---
 
 <div align="center">
-  <sub>Built with ❤️ for manga and comic enthusiasts. Star ⭐ Kites if you love seamless reading!</sub>
+  <sub>Built with ❤️ for manga and comic enthusiasts. Star ⭐ KomaFlow if you love seamless reading!</sub>
 </div>

@@ -45,9 +45,28 @@ describe('Studio OCR canonical layout precompute', () => {
     expect(mocks.resolve.mock.calls.map(([options]) => options.typesetMode)).toEqual(['contour', 'simple']);
     expect(mocks.typeset).toHaveBeenCalledWith(input.text, input.box, input.contourPoints, context,
       expect.objectContaining({ frame: { width: 100, height: 80 }, minFontSize: 9,
-        fontFamily: resolveRenderFontFamily('comic'), isBold: true, targetLang: 'de' }));
+        fontFamily: resolveRenderFontFamily('comic'), isBold: true, isItalic: false, targetLang: 'de' }));
     expect(result.layouts[0]?.fontSize).toBe(17.25);
+    expect(result.italic).toBe(false);
     expect(result.fontFamily).toBe(resolveRenderFontFamily('comic'));
+  });
+
+  it('forwards renderFontItalic and non-default renderFontMinSize overrides', async () => {
+    const context = {} as CanvasRenderingContext2D;
+    const state = {
+      ...DEFAULT_POPUP_STATE,
+      renderFontPresetId: 'font:DB HelvethaicaMon X Med' as any,
+      renderFontItalic: true,
+      renderFontMinSize: 20,
+    };
+    const result = await precomputeStudioOcrLayouts([input], state, () => context);
+    expect(mocks.typeset).toHaveBeenCalledWith(input.text, input.box, input.contourPoints, context,
+      expect.objectContaining({
+        isItalic: true,
+        minFontSize: 20,
+        fontFamily: '"DB HelvethaicaMon X Med", sans-serif',
+      }));
+    expect(result.italic).toBe(true);
   });
 
   it('propagates dictionary failure before any fixed measurement', async () => {

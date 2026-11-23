@@ -243,4 +243,48 @@ describe('ChapterReaderModal UI & Controls', () => {
 
     expect(onExportZip).toHaveBeenCalled();
   });
+
+  it('renders Rescan button when onRescan is provided and clamps page index when pages shrink', async () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    roots.push(root);
+    const onRescan = vi.fn();
+
+    await act(async () => {
+      root.render(
+        <ChapterReaderModal
+          isOpen={true}
+          onClose={vi.fn()}
+          pages={mockPages}
+          onRescan={onRescan}
+        />
+      );
+    });
+
+    const rescanBtn = container.querySelector('button[title*="Rescan page"]') as HTMLButtonElement;
+    expect(rescanBtn).not.toBeNull();
+    await act(async () => {
+      rescanBtn.click();
+    });
+    expect(onRescan).toHaveBeenCalledTimes(1);
+
+    // Move to page 2 in Single mode then shrink pages to 1
+    const singleBtn = Array.from(container.querySelectorAll('button')).find((b) => b.textContent?.includes('Single'));
+    await act(async () => { singleBtn?.click(); });
+    await act(async () => { window.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true })); });
+    expect(container.textContent).toContain('Page 2 / 2');
+
+    await act(async () => {
+      root.render(
+        <ChapterReaderModal
+          isOpen={true}
+          onClose={vi.fn()}
+          pages={[mockPages[0]]}
+          onRescan={onRescan}
+        />
+      );
+    });
+    expect(container.textContent).toContain('Page 1 / 1');
+  });
 });

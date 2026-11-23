@@ -63,9 +63,14 @@ export function wrapTextContour(text: string, contour: Point2D[], ctx: CanvasRen
   // Donor automatic_maximum for horizontal balloon text is the usable frame width.
   const maxFont = options.maxFontSize ? Math.max(minFont, options.maxFontSize) : Math.max(minFont, frame.width);
 
+  const GENERIC_FAMILIES = new Set([
+    'sans-serif', 'serif', 'monospace', 'cursive', 'fantasy', 'system-ui',
+    'ui-sans-serif', 'ui-serif', 'ui-monospace', 'ui-rounded', 'emoji', 'math', 'fangsong',
+  ]);
   const family = (fontFamily || 'sans-serif').trim();
-  const familyStack = family.includes(',') ? family
-    : (family.startsWith('"') || family.startsWith("'") ? family : `"${family}"`);
+  const familyStack = family.includes(',') || family.startsWith('"') || family.startsWith("'") || GENERIC_FAMILIES.has(family.toLowerCase())
+    ? family
+    : `"${family}"`;
   const stylePrefix = `${options.isItalic ? 'italic ' : ''}${options.isBold ? 'bold ' : ''}`;
   // Preserve fractional probe sizes: donor shapes and measures at unrounded f32 sizes.
   const fontSpec = (size: number): string => `${stylePrefix}${size}px ${familyStack}`;

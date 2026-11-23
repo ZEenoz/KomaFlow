@@ -1,4 +1,5 @@
 import type { PopupState } from '../../shared/types';
+import { ensureFontsRegistered } from '../../shared/fontLibrary';
 import { resolveRenderFontFamily } from '../../shared/renderFontPresets';
 import { TypesetStrategyFactory, type TypesetResult } from '../engines/typeset';
 import type { BoxRect } from '../utils/bubbleExpansion';
@@ -19,6 +20,7 @@ export interface StudioOcrLayoutInput {
 export interface StudioOcrLayouts {
   fontFamily: string;
   bold: boolean;
+  italic: boolean;
   targetLang: string;
   layouts: (TypesetResult | undefined)[];
 }
@@ -34,20 +36,31 @@ export interface StudioOcrLayouts {
  */
 export async function precomputeStudioOcrLayouts(
   inputs: StudioOcrLayoutInput[],
-  state: Pick<PopupState, 'renderFontPresetId' | 'renderFontBold' | 'targetLang'>,
+  state: Pick<PopupState, 'renderFontPresetId' | 'renderFontBold' | 'targetLang'> &
+    Partial<Pick<PopupState, 'renderFontItalic' | 'renderFontMinSize'>>,
   createContext: (width: number, height: number) => CanvasRenderingContext2D | null,
 ): Promise<StudioOcrLayouts> {
   const fontFamily = resolveRenderFontFamily(state.renderFontPresetId);
   const bold = state.renderFontBold ?? false;
+  const italic = state.renderFontItalic ?? false;
   const targetLang = state.targetLang || 'en';
+  const effectiveMinFontSize = typeof state.renderFontMinSize === 'number'
+    && Number.isFinite(state.renderFontMinSize)
+    && state.renderFontMinSize !== 6
+    ? state.renderFontMinSize
+    : MINIMUM_READABLE_FONT_SIZE;
   const accepted = inputs.filter((input) => input.mode !== 'balloon' && !input.isVertical && input.text.trim());
   if (accepted.length > 0) {
     await loadHyphenationLanguage(targetLang);
+    if (typeof indexedDB !== 'undefined') {
+      await ensureFontsRegistered().catch(() => {});
+    }
     if (typeof document !== 'undefined' && document.fonts) {
       const families = fontFamily.split(',').map((family) => family.trim().replace(/^["']|["']$/g, ''));
+      const stylePrefix = `${italic ? 'italic ' : ''}${bold ? 'bold ' : ''}`;
       await Promise.all(families.filter((family) => family &&
         !['sans-serif', 'serif', 'monospace', 'cursive', 'fantasy'].includes(family.toLowerCase()))
-        .map((family) => document.fonts.load(`${bold ? 'bold ' : ''}16px "${family}"`)));
+        .map((family) => document.fonts.load(`${stylePrefix}16px "${family}"`)));
       await document.fonts.ready;
     }
   }
@@ -59,9 +72,9 @@ export async function precomputeStudioOcrLayouts(
       typesetMode: input.mode, isFixed: true, hasContour: input.mode === 'contour',
     });
     return strategy.typeset(input.text, input.box, input.contourPoints, context, {
-      fontFamily, isBold: bold, targetLang, minFontSize: MINIMUM_READABLE_FONT_SIZE,
+      fontFamily, isBold: bold, isItalic: italic, targetLang, minFontSize: effectiveMinFontSize,
       frame: { width: input.box.w, height: input.box.h },
     }) ?? undefined;
   });
-  return { fontFamily, bold, targetLang, layouts };
+  return { fontFamily, bold, italic, targetLang, layouts };
 }

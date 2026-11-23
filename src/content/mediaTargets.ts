@@ -71,13 +71,47 @@ export function reapplyMediaTargetStyles(img: HTMLImageElement, surfaceElement: 
  * @param url - URL to normalize.
  * @returns URL suitable for source identity comparisons.
  */
+const VOLATILE_QUERY_PARAMS = new Set([
+  '_', 't', 'ts', 'cb', 'cache', 'cachebust', 'cachebuster', 'rnd', 'rand',
+  'fbclid', 'gclid', 'v', 'ver', 'version', 'sig', 'signature', 'expires', 'exp',
+]);
+
+/**
+ * Normalizes an image URL for source identity comparisons by stripping volatile
+ * cache/tracking parameters and hash fragments while canonically preserving
+ * pagination/proxy query parameters.
+ *
+ * @param url - URL to normalize.
+ * @returns URL suitable for source identity comparisons.
+ */
 export function normalizeMediaUrl(url: string): string {
   if (!url) return '';
+  if (url.startsWith('data:') || url.startsWith('blob:')) return url;
   try {
-    const parsed = new URL(url, window.location.href);
-    return `${parsed.origin}${parsed.pathname}`;
+    const base = typeof window !== 'undefined' && window.location?.href ? window.location.href : 'http://localhost/';
+    const parsed = new URL(url, base);
+    if (parsed.protocol === 'data:' || parsed.protocol === 'blob:') return url;
+    const kept: Array<[string, string]> = [];
+    parsed.searchParams.forEach((value, key) => {
+      const lower = key.toLowerCase();
+      if (
+        VOLATILE_QUERY_PARAMS.has(lower) ||
+        lower.startsWith('utm_') ||
+        lower.startsWith('x-amz-')
+      ) {
+        return;
+      }
+      kept.push([key, value]);
+    });
+    if (kept.length === 0) {
+      return `${parsed.origin}${parsed.pathname}`;
+    }
+    kept.sort((a, b) => a[0].localeCompare(b[0]) || a[1].localeCompare(b[1]));
+    const params = new URLSearchParams();
+    for (const [k, v] of kept) params.append(k, v);
+    return `${parsed.origin}${parsed.pathname}?${params.toString()}`;
   } catch {
-    return url.split('?')[0].split('#')[0];
+    return url.split('#')[0];
   }
 }
 

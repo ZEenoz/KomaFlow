@@ -37,18 +37,55 @@ export const CJK_FONT_STACK = '"Microsoft YaHei Bold", "Microsoft YaHei", "WenQu
  * @param isBold - Whether to render text in bold weight (defaults to false).
  * @returns Formatted CSS font string, e.g. '16px "Comic Sans MS", sans-serif' or 'bold 16px "Comic Sans MS", sans-serif'.
  */
+const GENERIC_FONT_FAMILIES = new Set([
+  'sans-serif',
+  'serif',
+  'monospace',
+  'cursive',
+  'fantasy',
+  'system-ui',
+  'ui-sans-serif',
+  'ui-serif',
+  'ui-monospace',
+  'ui-rounded',
+  'emoji',
+  'math',
+  'fangsong',
+]);
+
+function quoteFontStack(family: string): string {
+  const trimmed = family.trim();
+  if (!trimmed) return 'sans-serif';
+  if (trimmed.includes(',') || /^['"]/.test(trimmed)) return trimmed;
+  return GENERIC_FONT_FAMILIES.has(trimmed.toLowerCase()) ? trimmed : `"${trimmed}"`;
+}
+
+/**
+ * Formats a CSS font string for CanvasRenderingContext2D.font.
+ * Uses CJK fallback stack when text contains CJK characters.
+ * @param size - Font size in pixels.
+ * @param fontFamily - CSS font-family stack.
+ * @param sampleText - Optional text sample used to detect non-Latin/CJK characters.
+ * @param customCjk - Optional custom CJK font stack override.
+ * @param isBold - Whether to render text in bold weight (defaults to false).
+ * @param isItalic - Whether to render text in italic style (defaults to false).
+ * @returns Formatted CSS font string, e.g. '16px "Comic Sans MS", sans-serif' or 'bold 16px "Comic Sans MS", sans-serif'.
+ */
 export function fontSpec(
   size: number,
   fontFamily: string = DEFAULT_FONT_FAMILY,
   sampleText?: string,
   customCjk?: string,
-  isBold: boolean = false
+  isBold: boolean = false,
+  isItalic: boolean = false
 ): string {
   const isCjk = sampleText ? CJK_REGEX.test(sampleText) : false;
   const cjkStack = customCjk || CJK_FONT_STACK;
-  const family = isCjk ? `${cjkStack}, ${fontFamily}` : `${fontFamily}, ${cjkStack}`;
+  const safeFamily = quoteFontStack(fontFamily);
+  const family = isCjk ? `${cjkStack}, ${safeFamily}` : `${safeFamily}, ${cjkStack}`;
+  const style = isItalic ? 'italic ' : '';
   const weight = isBold ? 'bold ' : '';
-  return `${weight}${size}px ${family}`;
+  return `${style}${weight}${size}px ${family}`;
 }
 
 const BOX_INSET = 0.05;
@@ -601,8 +638,13 @@ export function fitFontSizeWithLines(
   customCjk?: string,
   isBold: boolean = false,
   measureCache?: MeasureCache,
-  targetLang: string = 'en'
+  targetLang: string = 'en',
+  isItalic: boolean = false,
+  minFontSize?: number
 ): FitFontSizeLayout {
+  const minFloor = typeof minFontSize === 'number' && Number.isFinite(minFontSize)
+    ? Math.max(4, minFontSize)
+    : MIN_FONT_SIZE;
   const inset = boxInset ?? BOX_INSET;
   const maxW = Math.max(10, boxW * (1 - 2 * inset));
   const maxH = Math.max(10, boxH * (1 - 2 * inset));
@@ -636,8 +678,8 @@ export function fitFontSizeWithLines(
     }
   }
 
-  let finalSize = MIN_FONT_SIZE;
-  mCtx.font = fontSpec(MIN_FONT_SIZE, fontFamily, text, customCjk, isBold);
+  let finalSize = minFloor;
+  mCtx.font = fontSpec(minFloor, fontFamily, text, customCjk, isBold, isItalic);
   let finalLines: string[] = wrapText(mCtx, text, maxW, targetLang);
   const consider = (size: number, lines: string[]): void => {
     if (size > finalSize && lines.length > 0) {
@@ -646,16 +688,16 @@ export function fitFontSizeWithLines(
     }
   };
 
-  let lo = MIN_FONT_SIZE;
+  let lo = minFloor;
   let hi = Math.max(lo, maxSize ?? startSize);
-  let cleanBest = MIN_FONT_SIZE;
+  let cleanBest = minFloor;
   let foundClean = false;
 
   // Pass 1: Clean binary search with whole words only
   while (lo <= hi) {
     const mid = Math.floor((lo + hi) / 2);
     if (mid === 0) break;
-    mCtx.font = fontSpec(mid, fontFamily, text, customCjk, isBold);
+    mCtx.font = fontSpec(mid, fontFamily, text, customCjk, isBold, isItalic);
 
     const maxWordWidth = Math.max(
       0,
@@ -699,22 +741,22 @@ export function fitFontSizeWithLines(
 
   // Pass 2: Tall-narrow typeset floor when H/W >= 2.0
   const aspectRatio = maxH / Math.max(maxW, 1);
-  const effectiveCap = Math.max(MIN_FONT_SIZE, maxSize ?? startSize);
+  const effectiveCap = Math.max(minFloor, maxSize ?? startSize);
   if (aspectRatio >= 2.0) {
     const geometricCandidate = Math.min(
       effectiveCap,
       Math.max(
-        MIN_FONT_SIZE,
+        minFloor,
         Math.round(maxW * 0.28),
         Math.round(Math.sqrt(maxW * maxH) * 0.10)
       )
     );
-    let floorLo = MIN_FONT_SIZE;
+    let floorLo = minFloor;
     let floorHi = geometricCandidate;
     while (floorLo <= floorHi) {
       const mid = Math.floor((floorLo + floorHi) / 2);
       if (mid === 0) break;
-      mCtx.font = fontSpec(mid, fontFamily, text, customCjk, isBold);
+      mCtx.font = fontSpec(mid, fontFamily, text, customCjk, isBold, isItalic);
       const lines = reflowText(mCtx, text, maxW, targetLang);
       const lineH = mid * LINE_HEIGHT;
       const allFitW = lines.every((l) => mCtx.measureText(l).width <= maxW + 0.5);
@@ -732,8 +774,8 @@ export function fitFontSizeWithLines(
   // Only engage when clean unhyphenated layout could not reach a readable font size floor (cleanBest < 14)
   if ((!foundClean || cleanBest < 14) && aspectRatio >= TALL_FILL_MIN_ASPECT) {
     const searchCeil = Math.min(effectiveCap, Math.max(finalSize, 36));
-    for (let mid = searchCeil; mid >= Math.max(finalSize, MIN_FONT_SIZE); mid--) {
-      mCtx.font = fontSpec(mid, fontFamily, text, customCjk, isBold);
+    for (let mid = searchCeil; mid >= Math.max(finalSize, minFloor); mid--) {
+      mCtx.font = fontSpec(mid, fontFamily, text, customCjk, isBold, isItalic);
       const lines = wrapText(mCtx, text, maxW, targetLang);
       const allLinesFitW = lines.every((l) => mCtx.measureText(l).width <= maxW + 0.5);
       if (allLinesFitW && lines.length * mid * LINE_HEIGHT <= maxH) {
@@ -746,17 +788,17 @@ export function fitFontSizeWithLines(
   const isNarrowVertical = (boxH / boxW >= 1.15 || boxH >= 120) && boxH >= 65;
   if (foundClean && (cleanBest >= 14 || !isNarrowVertical)) {
     if (!measureCache) cache.clear();
-    ctx.font = fontSpec(finalSize, fontFamily, text, customCjk, isBold);
+    ctx.font = fontSpec(finalSize, fontFamily, text, customCjk, isBold, isItalic);
     return { size: finalSize, lines: finalLines };
   }
 
   // Pass 4: Fallback
-  lo = Math.max(cleanBest, MIN_FONT_SIZE);
+  lo = Math.max(cleanBest, minFloor);
   hi = Math.max(lo, maxSize ?? startSize);
   while (lo <= hi) {
     const mid = Math.floor((lo + hi) / 2);
     if (mid === 0) break;
-    mCtx.font = fontSpec(mid, fontFamily, text, customCjk, isBold);
+    mCtx.font = fontSpec(mid, fontFamily, text, customCjk, isBold, isItalic);
     const lines = reflowText(mCtx, text, maxW, targetLang);
     const lineH = mid * LINE_HEIGHT;
     const allLinesFitW = lines.every((l) => mCtx.measureText(l).width <= maxW + 0.5);
@@ -770,7 +812,7 @@ export function fitFontSizeWithLines(
   }
 
   if (!measureCache) cache.clear();
-  ctx.font = fontSpec(finalSize, fontFamily, text, customCjk, isBold);
+  ctx.font = fontSpec(finalSize, fontFamily, text, customCjk, isBold, isItalic);
   return { size: finalSize, lines: finalLines };
 }
 

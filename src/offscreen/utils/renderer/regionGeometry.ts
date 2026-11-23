@@ -70,14 +70,15 @@ export function defaultLayoutFits(
   width: number,
   height: number,
   fontFamily: string = DEFAULT_RENDER_FONT_FAMILY,
-  isBold: boolean = false
+  isBold: boolean = false,
+  isItalic: boolean = false
 ): boolean {
   if (fitted.size <= 0 || fitted.lines.length === 0) return false;
   const insetW = width * (1 - 2 * DEFAULT_FIT_INSET);
   const insetH = height * (1 - 2 * DEFAULT_FIT_INSET);
   const requiredH = fitted.lines.length * fitted.size * DEFAULT_FIT_LINE_HEIGHT;
   if (requiredH > insetH) return false;
-  ctx.font = fontSpec(fitted.size, fontFamily, undefined, undefined, isBold);
+  ctx.font = fontSpec(fitted.size, fontFamily, undefined, undefined, isBold, isItalic);
   return fitted.lines.every((line) => ctx.measureText(line).width <= insetW);
 }
 

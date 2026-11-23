@@ -115,9 +115,7 @@ export const FontPickerDropdown: React.FC<FontPickerDropdownProps> = ({ selectio
   }, []);
 
   useEffect(() => {
-    if (isOpen) {
-      refresh();
-    }
+    refresh();
   }, [isOpen, refresh]);
 
   const items = useMemo<PickerItem[]>(() => {
@@ -210,7 +208,9 @@ export const FontPickerDropdown: React.FC<FontPickerDropdownProps> = ({ selectio
 
   const triggerFamily = selection.type === 'preset'
     ? RENDER_FONT_PRESETS.find((preset) => preset.id === selection.presetId)?.fontFamily ?? 'sans-serif'
-    : selection.family;
+    : selection.family
+      ? `${selection.family.includes(',') || /^['"]/.test(selection.family) ? selection.family : `"${selection.family}"`}, sans-serif`
+      : 'sans-serif';
 
   const rowClass = (active: boolean): string =>
     `${ROW_CLASS[variant]} ${active ? ACTIVE_ROW_CLASS[variant] : ''}`;

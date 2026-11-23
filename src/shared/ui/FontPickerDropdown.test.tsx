@@ -61,4 +61,24 @@ describe('FontPickerDropdown', () => {
     expect(container.textContent).toContain('Bangers');
     expect(container.textContent).toContain('Comic Neue');
   });
+
+  it('refreshes installed fonts on mount and quotes custom trigger font family', async () => {
+    await act(async () => {
+      root.render(
+        <FontPickerDropdown
+          variant="popup"
+          ariaLabel="Font"
+          selection={{ type: 'family', family: 'DB HelvethaicaMon X Med' }}
+          onSelect={() => {}}
+        />,
+      );
+    });
+    await act(async () => { await Promise.resolve(); });
+
+    expect(listLibraryMock).toHaveBeenCalledTimes(1);
+    const trigger = container.querySelector('button[aria-label="Font"]') as HTMLButtonElement;
+    const labelSpan = trigger.querySelector('span');
+    expect(labelSpan?.style.fontFamily).toContain('DB HelvethaicaMon X Med');
+    expect(labelSpan?.style.fontFamily).toContain('sans-serif');
+  });
 });

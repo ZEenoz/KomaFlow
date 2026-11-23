@@ -113,7 +113,7 @@ export function resolveRenderFontFamily(value: unknown): string {
     const family = sanitizeLibraryFamily(value.slice(CUSTOM_FONT_PREFIX.length));
     // Library faces register under this exact family in both the dashboard and the
     // offscreen bake document; an unregistered name degrades to canvas fallback.
-    return family || 'sans-serif';
+    return family ? `"${family}", sans-serif` : 'sans-serif';
   }
   const presetId = normalizeRenderFontPresetId(value);
   return fontRegistry[presetId]?.fontFamily ?? 'sans-serif';

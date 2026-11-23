@@ -23,6 +23,7 @@ export interface TypesetOptions {
   isBold?: boolean;
   isItalic?: boolean;
   minFontSize?: number;
+  minFontSizeFloor?: number;
   maxFontSize?: number;
   maxFontSizeCap?: number;
   linePitch?: number;

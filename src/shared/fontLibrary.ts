@@ -18,7 +18,7 @@ export interface InstalledFont {
   source: 'catalog' | 'import';
 }
 
-const registeredFamilies = new Set<string>();
+const registeredFamilies = new Map<string, { id?: string; face: FontFace }>();
 let registrationPromise: Promise<void> | null = null;
 
 /**
@@ -29,12 +29,17 @@ let registrationPromise: Promise<void> | null = null;
  * @param data - Raw font bytes (woff2/ttf/otf).
  * @returns Resolves when the face is loaded and added to document.fonts.
  */
-export async function registerFontFace(family: string, data: ArrayBuffer): Promise<void> {
-  if (registeredFamilies.has(family)) return;
+export async function registerFontFace(family: string, data: ArrayBuffer, id?: string): Promise<void> {
+  const existing = registeredFamilies.get(family);
+  if (existing && (id == null || existing.id === id)) return;
+  if (existing) {
+    document.fonts.delete?.(existing.face);
+    registeredFamilies.delete(family);
+  }
   const face = new FontFace(family, data);
   await face.load();
   document.fonts.add(face);
-  registeredFamilies.add(family);
+  registeredFamilies.set(family, { id, face });
 }
 
 /**
@@ -44,16 +49,27 @@ export async function registerFontFace(family: string, data: ArrayBuffer): Promi
  * @returns Resolves when all persisted faces are registered (failures logged per face).
  */
 export function ensureFontsRegistered(): Promise<void> {
-  registrationPromise ??= (async () => {
-    const records = await db.fonts.toArray();
-    for (const record of records) {
-      try {
-        await registerFontFace(record.family, record.data);
-      } catch (err) {
-        console.warn(`[FontLibrary] Failed to register persisted font "${record.family}":`, err);
+  if (!registrationPromise) {
+    registrationPromise = (async () => {
+      const records = await db.fonts.toArray();
+      const activeFamilies = new Set(records.map((r) => r.family));
+      for (const [family, entry] of registeredFamilies.entries()) {
+        if (!activeFamilies.has(family)) {
+          document.fonts.delete?.(entry.face);
+          registeredFamilies.delete(family);
+        }
       }
-    }
-  })();
+      for (const record of records) {
+        try {
+          await registerFontFace(record.family, record.data, record.id);
+        } catch (err) {
+          console.warn(`[FontLibrary] Failed to register persisted font "${record.family}":`, err);
+        }
+      }
+    })().finally(() => {
+      registrationPromise = null;
+    });
+  }
   return registrationPromise;
 }
 
@@ -135,7 +151,7 @@ export async function downloadCatalogFont(entry: FontCatalogEntry): Promise<Inst
     addedAt: Date.now(),
   };
   await db.fonts.put(record);
-  await registerFontFace(record.family, record.data);
+  await registerFontFace(record.family, record.data, record.id);
   return { id: record.id, family: record.family, label: record.label, source: 'catalog' };
 }
 
@@ -163,7 +179,7 @@ export async function importFontFile(file: File): Promise<InstalledFont> {
     addedAt: Date.now(),
   };
   await db.fonts.put(record);
-  await registerFontFace(record.family, record.data);
+  await registerFontFace(record.family, record.data, record.id);
   return { id: record.id, family: record.family, label: record.label, source: 'import' };
 }
 
@@ -175,7 +191,13 @@ export async function importFontFile(file: File): Promise<InstalledFont> {
 export async function deleteFont(id: string): Promise<void> {
   const record = await db.fonts.get(id);
   await db.fonts.delete(id);
-  if (record) registeredFamilies.delete(record.family);
+  if (record) {
+    const existing = registeredFamilies.get(record.family);
+    if (existing) {
+      document.fonts.delete?.(existing.face);
+      registeredFamilies.delete(record.family);
+    }
+  }
 }
 
 /**

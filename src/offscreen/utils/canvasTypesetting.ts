@@ -15,7 +15,7 @@ import {
   sanitizeTypesetText,
   compactSpecialSymbols,
 } from '../../shared/utils/textCleaning';
-import { TypesetStrategyFactory } from '../engines/typeset';
+import { DEFAULT_FIT_MAX_FONT_SIZE, TypesetStrategyFactory } from '../engines/typeset';
 
 /**
  * Batch driver for translated-text rendering.
@@ -271,13 +271,15 @@ export function calculateOptimalFontSize(
   height: number,
   isWestern: boolean = true,
   fontFamily: string = DEFAULT_RENDER_FONT_FAMILY,
-  isBold: boolean = false
+  isBold: boolean = false,
+  isItalic: boolean = false,
+  minFontSize?: number
 ): { fontSize: number; lines: string[]; lineHeight: number } {
   const targetWidth = Math.max(10, width * 0.85);
   const targetHeight = Math.max(10, height * 0.85);
   const words = isWestern ? segEng(text) : text.split('');
 
-  let minSize = 9;
+  let minSize = typeof minFontSize === 'number' && Number.isFinite(minFontSize) ? minFontSize : 9;
   let maxSize = Math.max(minSize, Math.min(36, Math.floor(height * 0.6)));
 
   let bestSize = minSize;
@@ -285,7 +287,7 @@ export function calculateOptimalFontSize(
 
   while (minSize <= maxSize) {
     const midSize = Math.floor((minSize + maxSize) / 2);
-    ctx.font = fontSpec(midSize, fontFamily, text, undefined, isBold);
+    ctx.font = fontSpec(midSize, fontFamily, text, undefined, isBold, isItalic);
 
     const lines = wrapText(ctx, text, targetWidth, isWestern);
     const lineHeight = midSize * 1.15;
@@ -301,7 +303,7 @@ export function calculateOptimalFontSize(
     }
   }
 
-  ctx.font = fontSpec(bestSize, fontFamily, text, undefined, isBold);
+  ctx.font = fontSpec(bestSize, fontFamily, text, undefined, isBold, isItalic);
   bestLines = wrapText(ctx, text, targetWidth, isWestern);
 
   return {
@@ -393,7 +395,8 @@ export function measureBubbleLayoutFontSize(
   isBold: boolean = false,
   targetLang: string = 'en',
   minFontSize?: number,
-  frame?: { width: number; height: number }
+  frame?: { width: number; height: number },
+  isItalic: boolean = false
 ): number {
   if (!block.text?.trim() || !Number.isFinite(box.w) || !Number.isFinite(box.h) || box.w < 1 || box.h < 1) return 0;
   const layoutFrame = frame ?? { width: box.w, height: box.h };
@@ -429,6 +432,7 @@ export function measureBubbleLayoutFontSize(
         minFontSize: minFontSize ?? MINIMUM_READABLE_FONT_SIZE,
         targetLang,
         isBold,
+        isItalic,
         targetCenterY,
         frame: layoutFrame
       }
@@ -442,8 +446,21 @@ export function measureBubbleLayoutFontSize(
     return res.fontSize;
   }
 
-  const fitted = measureDefaultLayout(ctx, block.text.trim(), layoutFrame.width, layoutFrame.height, bubbleLayoutFontTarget(block), undefined, fontFamily, isBold, undefined, targetLang);
-  return defaultLayoutFits(ctx, fitted, layoutFrame.width, layoutFrame.height, fontFamily, isBold) ? fitted.size : 0;
+  const fitted = measureDefaultLayout(
+    ctx,
+    block.text.trim(),
+    layoutFrame.width,
+    layoutFrame.height,
+    minFontSize !== undefined ? Math.max(bubbleLayoutFontTarget(block), minFontSize) : bubbleLayoutFontTarget(block),
+    minFontSize !== undefined ? Math.max(DEFAULT_FIT_MAX_FONT_SIZE, minFontSize) : undefined,
+    fontFamily,
+    isBold,
+    undefined,
+    targetLang,
+    isItalic,
+    minFontSize
+  );
+  return defaultLayoutFits(ctx, fitted, layoutFrame.width, layoutFrame.height, fontFamily, isBold, isItalic) ? fitted.size : 0;
 }
 
 /** Per-block render outcome, aligned with the input blocks array. */
@@ -599,23 +616,26 @@ export function renderTextBlocksBatch(
   targetLang: string = 'en',
   imageBounds?: RenderImageBounds,
   fontFamily: string = DEFAULT_RENDER_FONT_FAMILY,
-  isBold: boolean = false
+  isBold: boolean = false,
+  isItalic: boolean = false,
+  minFontSize?: number
 ): (RenderedBlockInfo | null)[] {
   if (!blocks || blocks.length === 0) return [];
 
   const bounds = imageBounds || (ctx?.canvas ? { width: ctx.canvas.width, height: ctx.canvas.height } : { width: 2000, height: 2000 });
 
   // Background-adaptive text color: sample the clean page under each quad. Blocks with
-  // explicit colors (user overrides / legacy callers) are respected untouched.
+  // an explicit textColor are respected untouched; explicit strokeColor (e.g. 'transparent')
+  // still samples textColor when missing.
   const coloredBlocks = blocks.map((b) => {
-    if (b.textColor || b.strokeColor) return b;
+    if (b.textColor) return b;
     if (!b.polygon || b.polygon.length < 3) return b;
     try {
       const quad = b.polygon.slice(0, Math.min(4, b.polygon.length));
       if (quad.length < 3) return b;
       const bg = sampleQuadBackground(ctx, quad);
       const choice = pickTextColor(bg);
-      return { ...b, textColor: choice.fill, strokeColor: choice.stroke };
+      return { ...b, textColor: choice.fill, strokeColor: b.strokeColor ?? choice.stroke };
     } catch {
       return b;
     }
@@ -625,9 +645,9 @@ export function renderTextBlocksBatch(
   const orientation = LANGUAGE_ORIENTATION_PRESETS[langKey] || 'h';
 
   if (orientation === 'h') {
-    return renderTextBlocksDefault(ctx, coloredBlocks, bounds.width, bounds.height, fontFamily, isBold, targetLang);
+    return renderTextBlocksDefault(ctx, coloredBlocks, bounds.width, bounds.height, fontFamily, isBold, targetLang, isItalic, minFontSize);
   }
-  return renderTextBlocksLegacy(ctx, coloredBlocks, targetLang, bounds, fontFamily, isBold);
+  return renderTextBlocksLegacy(ctx, coloredBlocks, targetLang, bounds, fontFamily, isBold, isItalic, minFontSize);
 }
 
 /**
@@ -641,6 +661,8 @@ export function renderTextBlocksBatch(
  * @param fontFamily - CSS font-family stack to render and measure with.
  * @param isBold - Whether to render text in bold weight.
  * @param targetLang - Target language code for hyphenation and typesetting rules.
+ * @param isItalic - Whether to render text in italic style.
+ * @param minFontSize - Optional user minimum font size override.
  * @returns Per-block render info aligned with `blocks` (null for skipped blocks).
  */
 function renderTextBlocksDefault(
@@ -650,7 +672,9 @@ function renderTextBlocksDefault(
   pageHeight: number,
   fontFamily: string = DEFAULT_RENDER_FONT_FAMILY,
   isBold: boolean = false,
-  targetLang: string = 'en'
+  targetLang: string = 'en',
+  isItalic: boolean = false,
+  minFontSize?: number
 ): (RenderedBlockInfo | null)[] {
   const results: (RenderedBlockInfo | null)[] = blocks.map(() => null);
   // WORKAROUND: [Tall strip font floor inflation] -> on extreme tall strips the Cotrans
@@ -705,10 +729,10 @@ function renderTextBlocksDefault(
       ? b.sourceLineCount
       : (b.fontSize && b.fontSize > 0 ? Math.max(1, Math.round(aabb.height / b.fontSize)) : 1);
     const fontSize = b.fontSize && b.fontSize > 0
-      ? b.fontSize
+      ? (minFontSize !== undefined ? Math.max(b.fontSize, minFontSize) : b.fontSize)
       : (b.sourceLineCount && b.sourceLineCount > 0
-          ? Math.max(fontSizeMinimum, Math.floor(aabb.height / b.sourceLineCount))
-          : fontSizeMinimum);
+          ? Math.max(minFontSize ?? fontSizeMinimum, Math.floor(aabb.height / b.sourceLineCount))
+          : (minFontSize ?? fontSizeMinimum));
 
     const region: DefaultRenderRegion = {
       translation,
@@ -732,7 +756,7 @@ function renderTextBlocksDefault(
       const { dstPoints, fontSize: targetFontSize } = fixed
         ? { dstPoints: poly, fontSize: bubbleLayoutFontTarget(b) }
         : resizeRegionToFontSize(region, pageWidth, pageHeight);
-      if (fixed && measureBubbleLayoutFontSize(ctx, b, b.typesetBox!, fontFamily, isBold, targetLang) === 0) continue;
+      if (fixed && measureBubbleLayoutFontSize(ctx, b, b.typesetBox!, fontFamily, isBold, targetLang, minFontSize, undefined, isItalic) === 0) continue;
       const wordCount = translation.split(/\s+/).filter(Boolean).length;
       if (wordCount >= 2) {
         // Same quad dims renderRegionDefault will lay out against (edge midpoints).
@@ -742,9 +766,10 @@ function renderTextBlocksDefault(
         // Keep the Disabled/free-box baseline unchanged. Fixed layouts use the exact
         // renderer normalization shared with the layout solver's measurement callback.
         const sanitizedTranslation = sanitizeTypesetText(compactSpecialSymbols(translation));
+        const effectiveTargetFont = minFontSize !== undefined ? Math.max(targetFontSize, minFontSize) : targetFontSize;
         const fitted = fixed
-          ? measureDefaultLayout(ctx, sanitizedTranslation, normH, normV, targetFontSize, undefined, fontFamily, isBold, pageMeasureCache, targetLang)
-          : fitFontSizeWithLines(ctx, sanitizedTranslation, fontFamily, normH, normV, targetFontSize, Math.max(targetFontSize, 48), 0.05, undefined, isBold, pageMeasureCache, targetLang);
+          ? measureDefaultLayout(ctx, sanitizedTranslation, normH, normV, effectiveTargetFont, undefined, fontFamily, isBold, pageMeasureCache, targetLang, isItalic, minFontSize)
+          : fitFontSizeWithLines(ctx, sanitizedTranslation, fontFamily, normH, normV, effectiveTargetFont, Math.max(effectiveTargetFont, 48), 0.05, undefined, isBold, pageMeasureCache, targetLang, isItalic, minFontSize);
         dialogueSizes.push(fitted.size);
       }
       planned.push({ index: i, region, dstPoints, targetFontSize, wordCount, fixed });
@@ -799,13 +824,13 @@ function renderTextBlocksDefault(
       const isScream = plan.wordCount === 1 && /^[A-Z0-9\s!！?？]+$/.test(plan.region.translation);
       const isShortNonScream = plan.wordCount <= 3 && !isScream;
       const baselineCap = !plan.fixed && pageDialogueBaseline > 0 && isShortNonScream
-        ? Math.max(18, Math.round(pageDialogueBaseline * 1.25))
+        ? Math.max(18, minFontSize ?? 0, Math.round(pageDialogueBaseline * 1.25))
         : undefined;
       // Explicit frame from edge midpoints: never let a contour bbox define layout bounds.
       const [qtl, qtr, qbr, qbl] = plan.dstPoints;
       const frameWidth = Math.hypot((qtr.x + qbr.x) / 2 - (qtl.x + qbl.x) / 2, (qtr.y + qbr.y) / 2 - (qtl.y + qbl.y) / 2);
       const frameHeight = Math.hypot((qbl.x + qbr.x) / 2 - (qtl.x + qtr.x) / 2, (qbl.y + qbr.y) / 2 - (qtl.y + qtr.y) / 2);
-      const info = renderRegionDefault(ctx, plan.region, plan.dstPoints, plan.targetFontSize, baselineCap, fontFamily, isBold, pageMeasureCache, targetLang, { width: frameWidth, height: frameHeight });
+      const info = renderRegionDefault(ctx, plan.region, plan.dstPoints, plan.targetFontSize, baselineCap, fontFamily, isBold, pageMeasureCache, targetLang, { width: frameWidth, height: frameHeight }, isItalic, minFontSize);
       if (info) {
         results[plan.index] = {
           fontSize: info.fontSize,
@@ -847,7 +872,9 @@ function renderTextBlocksLegacy(
   targetLang: string,
   bounds: { width: number; height: number },
   fontFamily: string = DEFAULT_RENDER_FONT_FAMILY,
-  isBold: boolean = false
+  isBold: boolean = false,
+  isItalic: boolean = false,
+  minFontSize?: number
 ): (RenderedBlockInfo | null)[] {
   const results: (RenderedBlockInfo | null)[] = blocks.map(() => null);
 
@@ -883,10 +910,12 @@ function renderTextBlocksLegacy(
       box.height,
       false,
       fontFamily,
-      isBold
+      isBold,
+      isItalic,
+      minFontSize
     );
 
-    ctx.font = fontSpec(fontSize, fontFamily, finalText, undefined, isBold);
+    ctx.font = fontSpec(fontSize, fontFamily, finalText, undefined, isBold, isItalic);
     let maxLineWidth = 0;
     for (const line of lines) {
       const w = ctx.measureText(line).width;
@@ -912,6 +941,7 @@ function renderTextBlocksLegacy(
       fontSize,
       lines,
       lineHeight,
+      maxLineWidth,
       totalHeight,
       angle,
       initialRect,
@@ -943,9 +973,18 @@ function renderTextBlocksLegacy(
     // punctuation ordering (no manual string operations).
     ctx.direction = isRtl ? 'rtl' : 'ltr';
 
-    ctx.font = fontSpec(meta.fontSize, fontFamily, meta.finalText, undefined, isBold);
-    ctx.textAlign = 'center';
+    ctx.font = fontSpec(meta.fontSize, fontFamily, meta.finalText, undefined, isBold, isItalic);
+    const align = meta.block.alignment === 'left' || meta.block.alignment === 'right'
+      ? meta.block.alignment
+      : 'center';
+    ctx.textAlign = align;
     ctx.textBaseline = 'middle';
+
+    const drawX = align === 'left'
+      ? -meta.maxLineWidth / 2
+      : align === 'right'
+        ? meta.maxLineWidth / 2
+        : 0;
 
     const textColor = meta.block.textColor || '#000000';
     const strokeColor = meta.block.strokeColor || '#FFFFFF';
@@ -959,14 +998,14 @@ function renderTextBlocksLegacy(
     if (strokeColor && strokeColor !== 'transparent') {
       let strokeY = -meta.totalHeight / 2 + meta.lineHeight / 2;
       for (const line of meta.lines) {
-        ctx.strokeText(line, 0, strokeY);
+        ctx.strokeText(line, drawX, strokeY);
         strokeY += meta.lineHeight;
       }
     }
 
     let fillY = -meta.totalHeight / 2 + meta.lineHeight / 2;
     for (const line of meta.lines) {
-      ctx.fillText(line, 0, fillY);
+      ctx.fillText(line, drawX, fillY);
       fillY += meta.lineHeight;
     }
 

@@ -7,10 +7,16 @@ import { describe, expect, it } from 'vitest';
  *
  * @returns Parsed manifest object.
  */
-const readManifest = (): { permissions?: string[] } =>
+const readManifest = (): { name?: string; action?: { default_title?: string }; permissions?: string[] } =>
   JSON.parse(readFileSync(join(process.cwd(), 'manifest.json'), 'utf8'));
 
 describe('extension manifest', () => {
+  it('rebrands user-facing extension names to KomaFlow', () => {
+    const manifest = readManifest();
+    expect(manifest.name).toContain('KomaFlow');
+    expect(manifest.action?.default_title).toBe('KomaFlow');
+  });
+
   it('asks for unlimited storage, so WebLLM weights are not evictable', () => {
     // WebLLM keeps multi-GB weights in the extension origin's CacheStorage. Without this
     // permission the whole origin is quota-managed, and eviction is whole-origin rather than

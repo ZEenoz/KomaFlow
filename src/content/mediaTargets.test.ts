@@ -6,6 +6,7 @@ import {
   discoverAddedMediaTargets,
   discoverMediaTargets,
   getBackgroundUrls,
+  normalizeMediaUrl,
   reapplyMediaTargetStyles,
   resolveHoverMediaTarget,
   resolveImageSource,
@@ -545,5 +546,18 @@ describe('incremental mutation scan helpers', () => {
 
     expect(createStyleRevealedTarget(img)).toBeNull();
     expect(createStyleRevealedTarget(plain)).toBeNull();
+  });
+});
+
+describe('normalizeMediaUrl', () => {
+  it('preserves meaningful pagination/proxy query params canonically and strips cache-busters', () => {
+    expect(normalizeMediaUrl('https://site.com/image.php?page=1'))
+      .not.toBe(normalizeMediaUrl('https://site.com/image.php?page=2'));
+
+    expect(normalizeMediaUrl('https://site.com/_next/image?w=1200&url=%2F01.jpg&t=999&_=1&utm_source=x'))
+      .toBe(normalizeMediaUrl('https://site.com/_next/image?url=%2F01.jpg&w=1200'));
+
+    expect(normalizeMediaUrl('blob:https://site.com/abc-123')).toBe('blob:https://site.com/abc-123');
+    expect(normalizeMediaUrl('data:image/png;base64,AAA')).toBe('data:image/png;base64,AAA');
   });
 });

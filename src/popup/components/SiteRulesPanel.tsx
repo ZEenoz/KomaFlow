@@ -82,7 +82,7 @@ export default function SiteRulesPanel({ state, updateState, onClose }: SiteRule
           <span className="font-medium text-sm">Site Rules & Domains</span>
           <HelpTooltip
             size="sm"
-            content="Disable Kites on specific domains or configure custom CSS image selectors for complex manga reader sites."
+            content="Disable KomaFlow on specific domains or configure custom CSS image selectors for complex manga reader sites."
           />
         </div>
         <button
@@ -122,7 +122,7 @@ export default function SiteRulesPanel({ state, updateState, onClose }: SiteRule
       {activeTab === 'disabled' && (
         <div className="flex flex-col gap-2.5">
           <p className="text-[11px] text-[var(--color-muted)]">
-            Kites runs everywhere by default. Sites listed below will be completely ignored.
+            KomaFlow runs everywhere by default. Sites listed below will be completely ignored.
           </p>
 
           {/* Add input */}
@@ -168,7 +168,7 @@ export default function SiteRulesPanel({ state, updateState, onClose }: SiteRule
             </div>
           ) : (
             <p className="text-[11px] text-[var(--color-muted)] text-center py-2 italic">
-              No domains disabled. Kites is active on all supported pages.
+              No domains disabled. KomaFlow is active on all supported pages.
             </p>
           )}
         </div>

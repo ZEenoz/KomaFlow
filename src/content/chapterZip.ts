@@ -45,6 +45,7 @@ export interface ChapterImageRecord {
 export interface ChapterTranslationRecord extends ChapterImageRecord {
   jobId?: number;
   showOriginal: boolean;
+  renderConfigVersion?: number;
 }
 
 interface ChapterTranslationRegistryOptions {
@@ -126,7 +127,13 @@ export function createChapterTranslationRegistry(options: ChapterTranslationRegi
    * @param target - Fallback live elements for requests not initiated by the overlay.
    * @returns Completed record, or undefined when neither queue context nor a target is known.
    */
-  function complete(originalUrl: string, dataUrl: string, jobId?: number, target: ChapterSurface = {}): ChapterTranslationRecord | undefined {
+  function complete(
+    originalUrl: string,
+    dataUrl: string,
+    jobId?: number,
+    target: ChapterSurface = {},
+    renderConfigVersion?: number
+  ): ChapterTranslationRecord | undefined {
     if (jobId !== undefined && completedJobs.has(jobId)) return completedJobs.get(jobId);
     const position = pending.get(originalUrl) ?? (contextMenu?.originalUrl === originalUrl ? contextMenu.position : undefined);
     const current = get(originalUrl);
@@ -155,7 +162,7 @@ export function createChapterTranslationRegistry(options: ChapterTranslationRegi
     };
     const translatedUrl = options.createTranslatedUrl(dataUrl);
     const record: ChapterTranslationRecord = {
-      originalUrl, translatedUrl, jobId, showOriginal: false,
+      originalUrl, translatedUrl, jobId, showOriginal: false, renderConfigVersion,
       ...metadata,
     };
     chapter.set(originalUrl, record);

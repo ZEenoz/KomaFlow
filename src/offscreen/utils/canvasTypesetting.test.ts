@@ -455,4 +455,61 @@ describe('Canvas Typesetting', () => {
     // Font size in expanded chamber must be larger than or equal to narrow box
     expect(expandedResults[0]!.fontSize).toBeGreaterThanOrEqual(narrowResults[0]!.fontSize);
   });
+
+  it('samples adaptive textColor even when strokeColor is transparent and honors italic + minFontSize', () => {
+    const canvas = createCanvas(300, 300);
+    const ctx = canvas.getContext('2d') as unknown as OffscreenCanvasRenderingContext2D;
+    // Dark bubble background so adaptive text sampler should pick white text
+    (ctx as any).fillStyle = '#111111';
+    (ctx as any).fillRect(0, 0, 300, 300);
+
+    const results = renderTextBlocksBatch(
+      ctx,
+      [{
+        text: 'Visible text',
+        polygon: quad(20, 20, 200, 100),
+        typesetBox: { x: 20, y: 20, w: 200, h: 100 },
+        strokeColor: 'transparent',
+        alignment: 'right',
+        fontSize: 10,
+      }],
+      'en',
+      { width: 300, height: 300 },
+      '"DB HelvethaicaMon X Med", sans-serif',
+      false,
+      true,
+      20
+    );
+
+    expect(results[0]).not.toBeNull();
+    expect(results[0]!.textColor).toBe('white');
+    expect(results[0]!.strokeColor).toBe('transparent');
+    expect(results[0]!.fontSize).toBeGreaterThanOrEqual(20);
+    expect((ctx as any).font).toContain('italic ');
+  });
+
+  it('respects block alignment and italic/minFontSize in legacy non-Western renderer', () => {
+    const mockCtx = createMockCtx();
+    const results = renderTextBlocksBatch(
+      mockCtx,
+      [{
+        text: 'Line one\nShort',
+        polygon: quad(40, 40, 220, 140),
+        alignment: 'right',
+        textColor: '#000000',
+        strokeColor: '#FFFFFF',
+      }],
+      'ja',
+      { width: 400, height: 400 },
+      'sans-serif',
+      false,
+      true,
+      18
+    );
+
+    expect(results[0]).not.toBeNull();
+    expect(results[0]!.fontSize).toBeGreaterThanOrEqual(18);
+    expect((mockCtx as any).font).toContain('italic ');
+    expect((mockCtx as any).textAlign).toBe('right');
+  });
 });
