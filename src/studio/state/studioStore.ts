@@ -154,10 +154,10 @@ export interface StudioState {
 }
 
 const initialAppearance: EditorAppearanceSettings = {
-  selectedBoxBorderColor: '#e85c82',
+  selectedBoxBorderColor: '#1b365d',
   unselectedBoxBorderColor: 'rgba(255, 255, 255, 0.35)',
-  caretColor: '#e85c82',
-  brushCursorColor: 'rgba(244, 68, 109, 0.85)',
+  caretColor: '#60c1e5',
+  brushCursorColor: 'rgba(96, 193, 229, 0.85)',
 };
 
 const initialState: StudioState = {

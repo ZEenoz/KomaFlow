@@ -203,15 +203,15 @@ const slidesHtml = `
     <div class="cover-layout">
       <div>
         <div class="badge">⚡ Devpost AI Builders Hackathon 2026</div>
-        <div class="cover-title">Kites</div>
+        <div class="cover-title">KomaFlow</div>
         <div class="cover-sub">Spatial In-Browser Manga & Comic Translator</div>
         <div class="cover-desc">
           100% Client-Side WebGPU Neural Pipeline • Zero Python • Zero Cloud Lock-in • Authentic Comic Lettering in Real-Time
         </div>
         <div class="cover-meta">
           <strong>Creator:</strong> Unheat (dangtruongan)<br/>
-          <strong>Live Demo:</strong> https://kites-translator.pages.dev<br/>
-          <strong>Source Code:</strong> https://github.com/Unheat/Kites
+          <strong>Live Demo:</strong> https://github.com/ZEenoz/KomaFlow<br/>
+          <strong>Source Code:</strong> https://github.com/ZEenoz/KomaFlow
         </div>
       </div>
       <div class="cover-img-frame">
@@ -253,7 +253,7 @@ const slidesHtml = `
   <!-- SLIDE 3: Solution Overview -->
   <div class="slide">
     <div class="badge">02 · Solution Overview</div>
-    <h2 class="slide-title">Kites: 100% Local-First In-Browser AI Translation</h2>
+    <h2 class="slide-title">KomaFlow: 100% Local-First In-Browser AI Translation</h2>
     <p class="slide-sub">A zero-install Chrome extension running computer vision, generative inpainting, and typography directly on your graphics card.</p>
 
     <div class="grid-4col">
@@ -273,7 +273,7 @@ const slidesHtml = `
         <div class="card-desc">Images are processed in local browser memory and stored in local IndexedDB. Your reading history and images never touch our servers.</div>
       </div>
       <div class="card">
-        <div class="badge" style="color: #ff2d75; border-color: #ff2d75;">COMIC AWARE</div>
+        <div class="badge" style="color: #60c1e5; border-color: #60c1e5;">COMIC AWARE</div>
         <div class="card-title" style="margin-top: 10px;">Studio Typography</div>
         <div class="card-desc">Measures speech bubbles, balances multi-line wrapping, auto-sizes fonts, and renders authentic comic lettering directly in-page.</div>
       </div>
@@ -283,7 +283,7 @@ const slidesHtml = `
   <!-- SLIDE 4: Target Users -->
   <div class="slide">
     <div class="badge">03 · Target Users</div>
-    <h2 class="slide-title">Who Needs Kites: Global Manga & Web Comic Ecosystem</h2>
+    <h2 class="slide-title">Who Needs KomaFlow: Global Manga & Web Comic Ecosystem</h2>
     <p class="slide-sub">Serving international comic readers, social media art fans, and scanlation creators worldwide.</p>
 
     <div class="grid-3col">
@@ -292,7 +292,7 @@ const slidesHtml = `
         <div class="card-title">Global Manga & Webtoon Fans</div>
         <p style="font-size: 14px; font-weight: 700; color: #64748b; margin-bottom: 8px;">CHALLENGE:</p>
         <p class="card-desc" style="margin-bottom: 16px;">70M+ readers globally wait weeks or months for fan scanlation groups to translate raw Japanese, Korean, and Chinese releases.</p>
-        <p style="font-size: 14px; font-weight: 700; color: #10b981; margin-bottom: 8px;">HOW KITES EMPOWERS THEM:</p>
+        <p style="font-size: 14px; font-weight: 700; color: #10b981; margin-bottom: 8px;">HOW KOMAFLOW EMPOWERS THEM:</p>
         <p class="card-desc">Translate raw chapters instantly on manga sites with one click, preserving original artwork and dialogue emotion.</p>
       </div>
 
@@ -301,17 +301,17 @@ const slidesHtml = `
         <div class="card-title">Social Media Art Fans</div>
         <p style="font-size: 14px; font-weight: 700; color: #64748b; margin-bottom: 8px;">CHALLENGE:</p>
         <p class="card-desc" style="margin-bottom: 16px;">Millions of short comics and illustrations are shared daily on X (Twitter), Pixiv, and Reddit by creators without official translations.</p>
-        <p style="font-size: 14px; font-weight: 700; color: #10b981; margin-bottom: 8px;">HOW KITES EMPOWERS THEM:</p>
+        <p style="font-size: 14px; font-weight: 700; color: #10b981; margin-bottom: 8px;">HOW KOMAFLOW EMPOWERS THEM:</p>
         <p class="card-desc">The floating hover button translates comic strips directly inside the social media timeline with zero screenshots or copy-pasting.</p>
       </div>
 
       <div class="card">
-        <div style="font-size: 40px; font-weight: 900; color: #ff2d75; margin-bottom: 12px;">03</div>
+        <div style="font-size: 40px; font-weight: 900; color: #60c1e5; margin-bottom: 12px;">03</div>
         <div class="card-title">Scanlation Teams & Creators</div>
         <p style="font-size: 14px; font-weight: 700; color: #64748b; margin-bottom: 8px;">CHALLENGE:</p>
         <p class="card-desc" style="margin-bottom: 16px;">Manual cleaning, cloning, text redrawing, and typesetting in Photoshop takes 4–8 hours per manga chapter.</p>
-        <p style="font-size: 14px; font-weight: 700; color: #10b981; margin-bottom: 8px;">HOW KITES EMPOWERS THEM:</p>
-        <p class="card-desc">Kites Studio provides an interactive 8-point bounding box editor to polish translations, adjust fonts, and export 1:1 lossless PNGs.</p>
+        <p style="font-size: 14px; font-weight: 700; color: #10b981; margin-bottom: 8px;">HOW KOMAFLOW EMPOWERS THEM:</p>
+        <p class="card-desc">KomaFlow Studio provides an interactive 8-point bounding box editor to polish translations, adjust fonts, and export 1:1 lossless PNGs.</p>
       </div>
     </div>
   </div>
@@ -336,11 +336,11 @@ const slidesHtml = `
           <div class="card-desc">Keep action badges pinned across all comic panels, or enable Viewport Auto-Translate to queue chapters automatically as you scroll.</div>
         </div>
         <div class="card" style="padding: 20px 24px;">
-          <div class="card-title" style="font-size: 20px; color: #10b981;">🛠️ Built-in Kites Studio</div>
+          <div class="card-title" style="font-size: 20px; color: #10b981;">🛠️ Built-in KomaFlow Studio</div>
           <div class="card-desc">Triple-view inspection (Original, Clean Inpaint, Typeset), 8-point interactive bounding box resizing, and lossless 1:1 PNG export.</div>
         </div>
         <div class="card" style="padding: 20px 24px;">
-          <div class="card-title" style="font-size: 20px; color: #ff2d75;">🛡️ SPA Reversion Shield</div>
+          <div class="card-title" style="font-size: 20px; color: #60c1e5;">🛡️ SPA Reversion Shield</div>
           <div class="card-desc">MutationObserver guards prevent modern React/SPA frameworks (X/Twitter, Reddit) from reverting translated images back to raw scans.</div>
         </div>
       </div>
@@ -360,7 +360,7 @@ const slidesHtml = `
           <img src="${demo2In}" />
           <img src="${demo2Out}" />
         </div>
-        <p style="text-align: center; margin-top: 14px; font-size: 14px; color: #94a3b8;">Original Scan (Left) vs. Kites Translated (Right)</p>
+        <p style="text-align: center; margin-top: 14px; font-size: 14px; color: #94a3b8;">Original Scan (Left) vs. KomaFlow Translated (Right)</p>
       </div>
 
       <div class="proof-col">
@@ -369,7 +369,7 @@ const slidesHtml = `
           <img src="${demo7In}" />
           <img src="${demo7Out}" />
         </div>
-        <p style="text-align: center; margin-top: 14px; font-size: 14px; color: #94a3b8;">Original Scan (Left) vs. Kites Translated (Right)</p>
+        <p style="text-align: center; margin-top: 14px; font-size: 14px; color: #94a3b8;">Original Scan (Left) vs. KomaFlow Translated (Right)</p>
       </div>
     </div>
   </div>
@@ -415,7 +415,7 @@ const slidesHtml = `
       </div>
 
       <div class="card">
-        <div class="card-title" style="color: #ff2d75; font-size: 20px;">4. Storage & Display</div>
+        <div class="card-title" style="color: #60c1e5; font-size: 20px;">4. Storage & Display</div>
         <p style="font-size: 14px; color: #64748b; margin-bottom: 12px;">Dexie IndexedDB</p>
         <ul style="color: #94a3b8; font-size: 14px; line-height: 1.8; padding-left: 20px;">
           <li>Stores clean plate + TextBlocks</li>
@@ -430,7 +430,7 @@ const slidesHtml = `
   <!-- SLIDE 8: AI Technologies Used -->
   <div class="slide">
     <div class="badge">07 · AI Technologies</div>
-    <h2 class="slide-title">The 4 Core Pillars of the Kites AI Engine</h2>
+    <h2 class="slide-title">The 4 Core Pillars of the KomaFlow AI Engine</h2>
     <p class="slide-sub">Orchestrating computer vision, graph clustering, generative diffusion, and LLM inference.</p>
 
     <div class="grid-2x2">
@@ -450,7 +450,7 @@ const slidesHtml = `
         <div class="card-desc">Zero-resizing 1:1 scale dynamic 64px patch bucketing. Erases strictly along character contour polygons with UNCLIP 1.8 expansion to preserve line art.</div>
       </div>
       <div class="card">
-        <div class="badge" style="color: #ff2d75; border-color: #ff2d75;">LANGUAGE TRANSLATION</div>
+        <div class="badge" style="color: #60c1e5; border-color: #60c1e5;">LANGUAGE TRANSLATION</div>
         <div class="card-title">WebLLM & Cloudflare Shared Pool</div>
         <div class="card-desc">Runs on-device WebLLM (Qwen 2.5, Llama 3.2) or zero-cost Cloudflare Worker pool with Google OAuth and multi-provider fallback (Mistral -> Gemma -> Groq).</div>
       </div>
@@ -475,7 +475,7 @@ const slidesHtml = `
         <div class="card-desc">Zero images uploaded to remote servers</div>
       </div>
       <div class="card" style="align-items: center; text-align: center;">
-        <div style="font-size: 54px; font-weight: 900; color: #ff2d75; margin-bottom: 6px;">&lt; 3s</div>
+        <div style="font-size: 54px; font-weight: 900; color: #60c1e5; margin-bottom: 6px;">&lt; 3s</div>
         <div class="card-title" style="font-size: 20px;">Average Pipeline Latency</div>
         <div class="card-desc">Parallel inpainting + translation execution</div>
       </div>
@@ -483,7 +483,7 @@ const slidesHtml = `
 
     <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 32px; flex: 1;">
       <div class="card" style="background: #1a1523; border-color: #4b1a2e;">
-        <div style="color: #ff2d75; font-weight: 800; font-size: 16px; margin-bottom: 12px;">WITHOUT KITES (STATUS QUO)</div>
+        <div style="color: #60c1e5; font-weight: 800; font-size: 16px; margin-bottom: 12px;">WITHOUT KOMAFLOW (STATUS QUO)</div>
         <ul style="color: #94a3b8; font-size: 15px; line-height: 1.8; padding-left: 20px;">
           <li>$10/month cloud subscription fees with harsh daily token limits</li>
           <li>Painful terminal setup (Python, PyTorch, CUDA, Git dependencies)</li>
@@ -493,7 +493,7 @@ const slidesHtml = `
       </div>
 
       <div class="card" style="background: #0d2423; border-color: #134e4a;">
-        <div style="color: #10b981; font-weight: 800; font-size: 16px; margin-bottom: 12px;">WITH KITES (LOCAL-FIRST ERA)</div>
+        <div style="color: #10b981; font-weight: 800; font-size: 16px; margin-bottom: 12px;">WITH KOMAFLOW (LOCAL-FIRST ERA)</div>
         <ul style="color: #f8fafc; font-size: 15px; line-height: 1.8; padding-left: 20px;">
           <li>100% Free & Unlimited reading with zero monthly subscriptions</li>
           <li>One-click Chrome extension install (no terminal or coding required)</li>
@@ -507,7 +507,7 @@ const slidesHtml = `
   <!-- SLIDE 10: Future Roadmap & Vision -->
   <div class="slide">
     <div class="badge">09 · Roadmap & Future Vision</div>
-    <h2 class="slide-title">Scaling Kites: Next Milestones & Community Launch</h2>
+    <h2 class="slide-title">Scaling KomaFlow: Next Milestones & Community Launch</h2>
     <p class="slide-sub">Expanding platform reach, multi-language OCR coverage, and creator tooling.</p>
 
     <div class="grid-3col" style="flex: 1; margin-bottom: 30px;">
@@ -520,7 +520,7 @@ const slidesHtml = `
         <ul style="color: #94a3b8; font-size: 15px; line-height: 1.8; padding-left: 20px; margin-top: 12px;">
           <li>WebGPU ONNX PaddleOCR & LaMa Inpainting</li>
           <li>Kruskal-MST spatial bubble clustering</li>
-          <li>Interactive Kites Studio 8-point editor</li>
+          <li>Interactive KomaFlow Studio 8-point editor</li>
           <li>Pre-built zip & Chrome Web Store submission</li>
         </ul>
       </div>
@@ -544,7 +544,7 @@ const slidesHtml = `
           <span style="font-size: 26px; font-weight: 900; color: #fff;">Q1 2027</span>
           <span class="badge" style="color: #a855f7; border-color: #a855f7; margin: 0;">PLANNED</span>
         </div>
-        <div class="card-title" style="font-size: 20px; color: #ff2d75;">Asian OCR Expansion</div>
+        <div class="card-title" style="font-size: 20px; color: #60c1e5;">Asian OCR Expansion</div>
         <ul style="color: #94a3b8; font-size: 15px; line-height: 1.8; padding-left: 20px; margin-top: 12px;">
           <li>Vertical Korean Hangul dedicated dictionary</li>
           <li>Traditional Chinese Manhua tuning</li>
@@ -556,8 +556,8 @@ const slidesHtml = `
 
     <div class="card" style="padding: 20px 32px; align-items: center; text-align: center; border-color: #38bdf8; background: #1e293b;">
       <div style="font-size: 18px; color: #fff;">
-        <strong>Try Kites:</strong> <a href="https://kites-translator.pages.dev" style="color: #38bdf8; text-decoration: none;">https://kites-translator.pages.dev</a> &nbsp;•&nbsp;
-        <strong>GitHub:</strong> <a href="https://github.com/Unheat/Kites" style="color: #38bdf8; text-decoration: none;">https://github.com/Unheat/Kites</a> &nbsp;•&nbsp;
+        <strong>Try KomaFlow:</strong> <a href="https://github.com/ZEenoz/KomaFlow" style="color: #38bdf8; text-decoration: none;">https://github.com/ZEenoz/KomaFlow</a> &nbsp;•&nbsp;
+        <strong>GitHub:</strong> <a href="https://github.com/ZEenoz/KomaFlow" style="color: #38bdf8; text-decoration: none;">https://github.com/ZEenoz/KomaFlow</a> &nbsp;•&nbsp;
         <strong>Contact:</strong> andangtruong085@gmail.com
       </div>
     </div>

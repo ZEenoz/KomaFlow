@@ -109,14 +109,14 @@ export const PageRail: React.FC<PageRailProps> = ({
       {/* Top Header */}
       <div className="h-9 px-3 border-b border-[#262a3b] bg-[#141724] flex items-center justify-between shrink-0">
         <div className="flex items-center gap-1.5 text-xs font-bold text-slate-300">
-          <Layers className="w-3.5 h-3.5 text-[#e85c82]" />
+          <Layers className="w-3.5 h-3.5 text-[#60c1e5]" />
           <span>Pages ({pages.length})</span>
         </div>
         <div className="flex items-center gap-1">
           <button
             type="button"
             onClick={onOpenAddFromLibrary}
-            className="p-1 rounded-md text-[#e85c82] hover:text-white hover:bg-[#d23360] transition cursor-pointer"
+            className="p-1 rounded-md text-[#60c1e5] hover:text-white hover:bg-[#005a9c] transition cursor-pointer"
             title="Add pages from library"
           >
             <Plus className="w-3.5 h-3.5" />
@@ -145,7 +145,7 @@ export const PageRail: React.FC<PageRailProps> = ({
               onClick={() => job.id && onSelectPage(job.id)}
               className={`group relative flex items-center gap-2 p-1.5 rounded-lg border cursor-pointer transition ${
                 isActive
-                  ? 'bg-[#d23360]/15 border-[#e85c82] ring-1 ring-[#e85c82]/30 shadow-sm'
+                  ? 'bg-[#005a9c]/15 border-[#60c1e5] ring-1 ring-[#60c1e5]/30 shadow-sm'
                   : 'bg-[#161924] border-[#262a3b] hover:border-slate-500'
               }`}
             >
@@ -183,7 +183,7 @@ export const PageRail: React.FC<PageRailProps> = ({
             <button
               type="button"
               onClick={onOpenAddFromLibrary}
-              className="mt-2 text-xs text-[#e85c82] hover:underline font-semibold cursor-pointer"
+              className="mt-2 text-xs text-[#60c1e5] hover:underline font-semibold cursor-pointer"
             >
               + Add pages
             </button>
@@ -210,7 +210,7 @@ export const PageRail: React.FC<PageRailProps> = ({
               onClick={() => handleExport('images')}
               className="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-[#262a3b] transition text-left cursor-pointer"
             >
-              <Download className="w-3 h-3 text-[#e85c82]" />
+              <Download className="w-3 h-3 text-[#60c1e5]" />
               <span>Standard ZIP</span>
             </button>
             <button
@@ -226,7 +226,7 @@ export const PageRail: React.FC<PageRailProps> = ({
               onClick={() => handleExport('psd')}
               className="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-[#262a3b] transition text-left cursor-pointer"
             >
-              <FileCode className="w-3 h-3 text-[#e85c82]" />
+              <FileCode className="w-3 h-3 text-[#60c1e5]" />
               <span>Layered PSD</span>
             </button>
           </div>

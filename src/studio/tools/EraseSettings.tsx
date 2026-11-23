@@ -28,7 +28,7 @@ export const EraseSettings: React.FC = () => {
             onClick={() => update({ source: 'inpainted' })}
             className={`py-1.5 px-2 rounded-md font-medium transition ${
               erase.source === 'inpainted'
-                ? 'bg-[#d23360] text-white shadow-xs'
+                ? 'bg-[#005a9c] text-white shadow-xs'
                 : 'text-slate-400 hover:text-slate-200'
             }`}
           >
@@ -38,7 +38,7 @@ export const EraseSettings: React.FC = () => {
             onClick={() => update({ source: 'original' })}
             className={`py-1.5 px-2 rounded-md font-medium transition ${
               erase.source === 'original'
-                ? 'bg-[#d23360] text-white shadow-xs'
+                ? 'bg-[#005a9c] text-white shadow-xs'
                 : 'text-slate-400 hover:text-slate-200'
             }`}
           >
@@ -55,7 +55,7 @@ export const EraseSettings: React.FC = () => {
             onClick={() => update({ shape: 'circle' })}
             className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-lg border transition ${
               erase.shape === 'circle'
-                ? 'border-[#e85c82] bg-[#d23360]/15 text-[#e85c82] font-medium'
+                ? 'border-[#60c1e5] bg-[#005a9c]/15 text-[#60c1e5] font-medium'
                 : 'border-[#282d3f] bg-[#090a0f] text-slate-400 hover:text-slate-200'
             }`}
           >
@@ -66,7 +66,7 @@ export const EraseSettings: React.FC = () => {
             onClick={() => update({ shape: 'square' })}
             className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-lg border transition ${
               erase.shape === 'square'
-                ? 'border-[#e85c82] bg-[#d23360]/15 text-[#e85c82] font-medium'
+                ? 'border-[#60c1e5] bg-[#005a9c]/15 text-[#60c1e5] font-medium'
                 : 'border-[#282d3f] bg-[#090a0f] text-slate-400 hover:text-slate-200'
             }`}
           >
@@ -88,7 +88,7 @@ export const EraseSettings: React.FC = () => {
           max="300"
           value={erase.size}
           onChange={(e) => update({ size: Number(e.target.value) })}
-          className="w-full accent-[#e85c82]"
+          className="w-full accent-[#60c1e5]"
         />
       </div>
 
@@ -104,7 +104,7 @@ export const EraseSettings: React.FC = () => {
           max="80"
           value={erase.feather}
           onChange={(e) => update({ feather: Number(e.target.value) })}
-          className="w-full accent-[#e85c82]"
+          className="w-full accent-[#60c1e5]"
         />
       </div>
     </div>

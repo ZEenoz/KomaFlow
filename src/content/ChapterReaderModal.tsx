@@ -432,9 +432,9 @@ export default function ChapterReaderModal({
                 display: 'flex',
                 alignItems: 'center',
                 gap: '6px',
-                backgroundColor: 'rgba(244, 68, 109, 0.15)',
-                color: '#f4446d',
-                border: '1px solid rgba(244, 68, 109, 0.3)',
+                backgroundColor: 'rgba(0, 90, 156, 0.15)',
+                color: '#60c1e5',
+                border: '1px solid rgba(0, 90, 156, 0.3)',
               }}
               title="Translating pages in background sequentially"
             >
@@ -454,10 +454,10 @@ export default function ChapterReaderModal({
                 alignItems: 'center',
                 gap: '6px',
                 cursor: 'pointer',
-                backgroundColor: '#f4446d',
+                backgroundColor: '#005a9c',
                 color: '#ffffff',
-                border: '1px solid #f4446d',
-                boxShadow: '0 2px 8px rgba(244, 68, 109, 0.35)',
+                border: '1px solid #005a9c',
+                boxShadow: '0 2px 8px rgba(0, 90, 156, 0.35)',
               }}
               title="Translate all pages in top-to-bottom sequence"
             >
@@ -578,7 +578,7 @@ export default function ChapterReaderModal({
                   : `Download Chapter ZIP (${translatedCount} page${translatedCount === 1 ? '' : 's'})`
               }
             >
-              {isExporting ? <Loader size={14} className="animate-spin text-[#f4446d]" /> : <Download size={14} />}
+              {isExporting ? <Loader size={14} className="animate-spin text-[#60c1e5]" /> : <Download size={14} />}
             </button>
           )}
         </div>
@@ -712,13 +712,13 @@ export default function ChapterReaderModal({
                         backgroundColor: 'rgba(0, 0, 0, 0.82)',
                         backdropFilter: 'blur(6px)',
                         WebkitBackdropFilter: 'blur(6px)',
-                        color: '#f4446d',
+                        color: '#60c1e5',
                         fontSize: '11px',
                         fontFamily: 'system-ui, sans-serif',
                         fontWeight: 600,
                         padding: '4px 10px',
                         borderRadius: '9999px',
-                        border: '1px solid rgba(244, 68, 109, 0.4)',
+                        border: '1px solid rgba(0, 90, 156, 0.4)',
                         display: 'flex',
                         alignItems: 'center',
                         gap: '6px',
@@ -797,12 +797,12 @@ export default function ChapterReaderModal({
                       left: '12px',
                       bottom: '12px',
                       backgroundColor: 'rgba(0, 0, 0, 0.82)',
-                      color: '#f4446d',
+                      color: '#60c1e5',
                       fontSize: '11px',
                       fontWeight: 600,
                       padding: '4px 10px',
                       borderRadius: '9999px',
-                      border: '1px solid rgba(244, 68, 109, 0.4)',
+                      border: '1px solid rgba(0, 90, 156, 0.4)',
                       display: 'flex',
                       alignItems: 'center',
                       gap: '6px',
@@ -922,12 +922,12 @@ export default function ChapterReaderModal({
                         left: '8px',
                         bottom: '8px',
                         backgroundColor: 'rgba(0, 0, 0, 0.82)',
-                        color: '#f4446d',
+                        color: '#60c1e5',
                         fontSize: '10px',
                         fontWeight: 600,
                         padding: '3px 8px',
                         borderRadius: '9999px',
-                        border: '1px solid rgba(244, 68, 109, 0.4)',
+                        border: '1px solid rgba(0, 90, 156, 0.4)',
                         display: 'flex',
                         alignItems: 'center',
                         gap: '4px',
@@ -966,12 +966,12 @@ export default function ChapterReaderModal({
                         left: '8px',
                         bottom: '8px',
                         backgroundColor: 'rgba(0, 0, 0, 0.82)',
-                        color: '#f4446d',
+                        color: '#60c1e5',
                         fontSize: '10px',
                         fontWeight: 600,
                         padding: '3px 8px',
                         borderRadius: '9999px',
-                        border: '1px solid rgba(244, 68, 109, 0.4)',
+                        border: '1px solid rgba(0, 90, 156, 0.4)',
                         display: 'flex',
                         alignItems: 'center',
                         gap: '4px',

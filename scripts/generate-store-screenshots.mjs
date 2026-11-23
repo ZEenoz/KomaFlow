@@ -59,9 +59,9 @@ const slides = [
             display: inline-flex;
             align-items: center;
             gap: 6px;
-            background: rgba(255, 42, 109, 0.15);
-            border: 1px solid rgba(255, 42, 109, 0.35);
-            color: #ff6584;
+            background: rgba(96, 193, 229, 0.15);
+            border: 1px solid rgba(96, 193, 229, 0.35);
+            color: #a0e0ef;
             padding: 5px 14px;
             border-radius: 9999px;
             font-size: 13px;
@@ -118,7 +118,7 @@ const slides = [
             border: 1px solid #475569;
           }
           .tag-kites {
-            background: linear-gradient(135deg, #e11d48, #ff2a6d);
+            background: linear-gradient(135deg, #005a9c, #1b365d);
             color: #ffffff;
             border: 1px solid rgba(255, 255, 255, 0.25);
           }
@@ -661,9 +661,9 @@ const slides = [
             display: inline-flex;
             align-items: center;
             gap: 6px;
-            background: rgba(255, 42, 109, 0.15);
-            border: 1px solid rgba(255, 42, 109, 0.35);
-            color: #ff6584;
+            background: rgba(96, 193, 229, 0.15);
+            border: 1px solid rgba(96, 193, 229, 0.35);
+            color: #a0e0ef;
             padding: 5px 14px;
             border-radius: 9999px;
             font-size: 13px;
@@ -837,9 +837,9 @@ const slides = [
             display: inline-flex;
             align-items: center;
             gap: 6px;
-            background: rgba(255, 42, 109, 0.15);
-            border: 1px solid rgba(255, 42, 109, 0.35);
-            color: #ff6584;
+            background: rgba(96, 193, 229, 0.15);
+            border: 1px solid rgba(96, 193, 229, 0.35);
+            color: #a0e0ef;
             padding: 5px 14px;
             border-radius: 9999px;
             font-size: 13px;

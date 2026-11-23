@@ -26,7 +26,7 @@
   position: relative;
   z-index: 999999;
   border: none;
-  background-color: #f4446d;
+  background-color: #005a9c;
   color: #ffffff;
   border-radius: 50%;
   display: flex;
@@ -37,7 +37,7 @@
   min-width: 32px;
   min-height: 32px;
   cursor: pointer;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25), inset 0 0 0 1px rgba(160, 224, 239, 0.75);
   transition: background-color 0.2s ease, opacity 0.2s ease, transform 0.15s ease;
   flex-shrink: 0;
   pointer-events: auto;
@@ -46,7 +46,7 @@
 #kites-translate-btn:hover,
 [data-kites-translate-button]:hover,
 .kites-translate-btn:hover {
-  background-color: #e0335c;
+  background-color: #1b365d;
   transform: scale(1.05);
 }
 
@@ -77,8 +77,8 @@
 
 .kites-action-btn:hover {
   background-color: #1a1d29;
-  border-color: #f4446d;
-  color: #f4446d;
+  border-color: #60c1e5;
+  color: #60c1e5;
   transform: scale(1.08);
 }
 
@@ -142,8 +142,9 @@
 
 .kites-snipper-selection {
   position: fixed;
-  border: 2px dashed #ff2d75;
-  background-color: rgba(255, 45, 117, 0.12);
+  border: 2px dashed #1b365d;
+  outline: 1px dashed #60c1e5;
+  background-color: rgba(96, 193, 229, 0.12);
   pointer-events: none;
   z-index: 2147483647;
 }
@@ -174,7 +175,8 @@
 .kites-crop-overlay {
   position: fixed;
   z-index: 99999;
-  border: 2px solid #ff2d75;
+  border: 2px solid #1b365d;
+  outline: 1px solid #60c1e5;
   border-radius: 3px;
   overflow: visible;
   box-sizing: border-box;
@@ -185,7 +187,7 @@
 
 .kites-crop-editable {
   border-style: dashed;
-  background: rgba(255, 45, 117, 0.08);
+  background: rgba(96, 193, 229, 0.08);
   box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.55);
 }
 
@@ -245,13 +247,13 @@
 .kites-crop-toolbar-btn:focus-visible {
   background-color: rgba(255, 255, 255, 0.15);
   color: #ffffff;
-  outline: 2px solid #ff2d75;
+  outline: 2px solid #60c1e5;
   outline-offset: 1px;
 }
 
 .kites-crop-toolbar-btn.kites-crop-btn-active {
-  background-color: #ff2d75;
-  color: #ffffff;
+  background-color: #60c1e5;
+  color: #0f1117;
 }
 
 .kites-crop-loading-badge,
@@ -331,7 +333,7 @@
   width: 8px;
   height: 8px;
   border: 2px solid #ffffff;
-  background: #ff2d75;
+  background: #1b365d;
   border-radius: 2px;
 }
 
@@ -456,15 +458,15 @@
 }
 
 .kites-reader-btn-primary {
-  background-color: #f4446d !important;
+  background-color: #005a9c !important;
   color: #ffffff !important;
-  border: 1px solid #f4446d !important;
+  border: 1px solid rgba(160, 224, 239, 0.55) !important;
   font-weight: 600 !important;
 }
 
 .kites-reader-btn-primary:hover {
-  background-color: #e0335c !important;
-  border-color: #e0335c !important;
+  background-color: #1b365d !important;
+  border-color: #60c1e5 !important;
 }
 
 .kites-reader-kbd {
@@ -663,7 +665,7 @@
 }
 
 .kites-reader-pill-btn:hover {
-  color: #f4446d !important;
+  color: #60c1e5 !important;
 }
 
 .kites-reader-pill-count {

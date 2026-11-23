@@ -456,7 +456,7 @@ export default function App() {
               <div className="p-2 border-b border-[#282d3f] flex flex-col gap-1.5">
                 <button
                   onClick={() => setAppMode('dashboard')}
-                  className="w-full flex items-center justify-center gap-1.5 py-1.5 rounded-lg border border-[#e85c82]/40 bg-[#d23360]/10 hover:bg-[#d23360]/20 text-xs text-[#e85c82] font-semibold transition"
+                  className="w-full flex items-center justify-center gap-1.5 py-1.5 rounded-lg border border-[#60c1e5]/40 bg-[#005a9c]/10 hover:bg-[#005a9c]/20 text-xs text-[#60c1e5] font-semibold transition"
                 >
                   <Layers className="w-3.5 h-3.5" />
                   <span>Manga Projects Hub</span>
@@ -468,7 +468,7 @@ export default function App() {
                 >
                   <div className="flex items-center gap-1.5">
                     {isUploading ? (
-                      <Loader className="w-3.5 h-3.5 text-[#e85c82] animate-spin" />
+                      <Loader className="w-3.5 h-3.5 text-[#60c1e5] animate-spin" />
                     ) : (
                       <Upload className="w-3.5 h-3.5" />
                     )}
@@ -483,7 +483,7 @@ export default function App() {
                   {uploadProgress && uploadProgress.total > 1 && (
                     <div className="w-full bg-[#1c1f2e] h-1 rounded-full overflow-hidden">
                       <div
-                        className="bg-[#e85c82] h-full rounded-full transition-all duration-300 ease-out"
+                        className="bg-[#60c1e5] h-full rounded-full transition-all duration-300 ease-out"
                         style={{
                           width: `${Math.round((uploadProgress.current / uploadProgress.total) * 100)}%`,
                         }}
@@ -502,7 +502,7 @@ export default function App() {
                       onClick={() => setActiveJobId(job.id!)}
                       className={`flex items-center justify-between p-2 rounded-lg cursor-pointer text-xs transition ${
                         isActive
-                          ? 'bg-[#e85c82]/15 border border-[#e85c82]/45 text-[#f0819e]'
+                          ? 'bg-[#60c1e5]/15 border border-[#60c1e5]/45 text-[#a0e0ef]'
                           : 'hover:bg-[#1c1f2e] text-slate-300 border border-transparent'
                       }`}
                     >
@@ -557,7 +557,7 @@ export default function App() {
             ) : (
               <div className="flex-1 flex flex-col items-center justify-center p-6 text-center">
                 <div className="w-16 h-16 rounded-2xl border border-[#282d3f] bg-[#12141c] flex items-center justify-center mb-4 shadow-xl">
-                  <Layers className="w-8 h-8 text-[#e85c82]" />
+                  <Layers className="w-8 h-8 text-[#60c1e5]" />
                 </div>
                 <h2 className="text-base font-semibold text-slate-100">KomaFlow Manga Studio</h2>
                 <p className="text-xs text-slate-400 max-w-sm mt-1">
@@ -573,7 +573,7 @@ export default function App() {
                   <button
                     onClick={() => fileInputRef.current?.click()}
                     disabled={isUploading}
-                    className="flex items-center gap-2 px-4 py-2 rounded-xl bg-[#d23360] text-white text-xs font-medium hover:bg-[#e85c82] transition shadow-lg shadow-[#d23360]/25"
+                    className="flex items-center gap-2 px-4 py-2 rounded-xl bg-[#005a9c] text-white text-xs font-medium hover:bg-[#1b365d] transition shadow-lg shadow-[#005a9c]/25"
                   >
                     {isUploading ? (
                       <Loader className="w-4 h-4 text-white animate-spin" />

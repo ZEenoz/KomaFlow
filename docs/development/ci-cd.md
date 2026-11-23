@@ -108,4 +108,4 @@ Production endpoint: `api.12094852.xyz` (see `src/shared/constants.ts` for clien
 - **Chrome Web Store upload** — manual dashboard step after each release.
 - **Visual acceptance QA** — smoke artifacts are evidence, not gates; real-page visual checks stay manual.
 - **Extension store listing copy** — description updates are committed to the repo (`chrome_store/`) but applied manually.
-- **Website deploy** (`site/`) — deployed out-of-band; `site/index.html` and assets are not built by CI.
+- **Website deploy** — no marketing site is built or deployed from this repository; the engineering documentation lives in `docs/`.

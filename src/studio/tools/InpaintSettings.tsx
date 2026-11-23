@@ -16,7 +16,7 @@ export const InpaintSettings: React.FC = () => {
     <div className="space-y-4 text-xs text-slate-200">
       <div className="pb-2 border-b border-[#282d3f]">
         <div className="flex items-center gap-2">
-          <Sparkles className="w-4 h-4 text-[#e85c82]" />
+          <Sparkles className="w-4 h-4 text-[#60c1e5]" />
           <h3 className="font-semibold text-sm text-slate-100">Live AI Inpaint Brush</h3>
         </div>
         <p className="text-[11px] text-slate-400 mt-1">
@@ -36,7 +36,7 @@ export const InpaintSettings: React.FC = () => {
             onClick={() => update({ source: 'background' })}
             className={`py-1.5 px-2 rounded-md font-medium text-center text-xs transition cursor-pointer ${
               inpaint.source === 'background'
-                ? 'bg-[#d23360] text-white shadow-xs'
+                ? 'bg-[#005a9c] text-white shadow-xs'
                 : 'text-slate-400 hover:text-slate-200 hover:bg-[#1c1f2e]/50'
             }`}
             title="Inpaint current working background canvas to remove residual artifacts (Default)"
@@ -48,7 +48,7 @@ export const InpaintSettings: React.FC = () => {
             onClick={() => update({ source: 'original' })}
             className={`py-1.5 px-2 rounded-md font-medium text-center text-xs transition cursor-pointer ${
               inpaint.source === 'original'
-                ? 'bg-[#d23360] text-white shadow-xs'
+                ? 'bg-[#005a9c] text-white shadow-xs'
                 : 'text-slate-400 hover:text-slate-200 hover:bg-[#1c1f2e]/50'
             }`}
             title="Inpaint untouched original artwork to cleanly erase original dialogue/SFX"
@@ -70,7 +70,7 @@ export const InpaintSettings: React.FC = () => {
             onClick={() => update({ shape: 'circle' })}
             className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-lg border transition ${
               inpaint.shape === 'circle'
-                ? 'border-[#e85c82] bg-[#d23360]/15 text-[#e85c82] font-medium'
+                ? 'border-[#60c1e5] bg-[#005a9c]/15 text-[#60c1e5] font-medium'
                 : 'border-[#282d3f] bg-[#090a0f] text-slate-400 hover:text-slate-200'
             }`}
           >
@@ -81,7 +81,7 @@ export const InpaintSettings: React.FC = () => {
             onClick={() => update({ shape: 'square' })}
             className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-lg border transition ${
               inpaint.shape === 'square'
-                ? 'border-[#e85c82] bg-[#d23360]/15 text-[#e85c82] font-medium'
+                ? 'border-[#60c1e5] bg-[#005a9c]/15 text-[#60c1e5] font-medium'
                 : 'border-[#282d3f] bg-[#090a0f] text-slate-400 hover:text-slate-200'
             }`}
           >
@@ -102,11 +102,11 @@ export const InpaintSettings: React.FC = () => {
           max="300"
           value={inpaint.size}
           onChange={(e) => update({ size: Number(e.target.value) })}
-          className="w-full accent-[#e85c82]"
+          className="w-full accent-[#60c1e5]"
         />
       </div>
 
-      <div className="p-3 rounded-lg bg-[#d23360]/10 border border-[#e85c82]/30 text-[11px] text-[#e85c82] leading-relaxed">
+      <div className="p-3 rounded-lg bg-[#005a9c]/10 border border-[#60c1e5]/30 text-[11px] text-[#60c1e5] leading-relaxed">
         ⚡ <strong>Privacy Guaranteed:</strong> Inpainting executes 100% inside your browser using WebGPU/WASM. No image crops leave your machine.
       </div>
     </div>

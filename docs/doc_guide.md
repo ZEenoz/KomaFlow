@@ -46,7 +46,7 @@ docs/
   development/            ← guides only: setup, testing, CI, standards, workarounds
   fullplan.md             ← project scope and phase roadmap (living)
   kites-workflow.json     ← source for the interactive map
-  workflow.html           ← generated interactive map artifact (also deployed to site/pipeline)
+  workflow.html           ← generated interactive map artifact (open directly in a browser)
   api-undocumented-baseline.json ← coverage ratchet input for npm run docs:check
 ```
 

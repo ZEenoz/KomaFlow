@@ -80,11 +80,11 @@ describe('Frontend UI & Button CSS Contract', () => {
     expect(wrapperStyle.position).toBe('fixed');
     expect(wrapperStyle.zIndex).toBe('999999');
 
-    // Button MUST have non-zero dimensions and brand background color (#f4446d)
+    // Button MUST have non-zero dimensions and brand background color (#005a9c)
     expect(buttonStyle.width).toBe('32px');
     expect(buttonStyle.height).toBe('32px');
     expect(buttonStyle.borderRadius).toBe('50%');
-    expect(buttonStyle.backgroundColor).toBe('rgb(244, 68, 109)');
+    expect(buttonStyle.backgroundColor).toBe('rgb(0, 90, 156)');
 
     // Finished actions and utility button classes in content.css
     const finishedActions = document.createElement('div');

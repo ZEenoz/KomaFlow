@@ -172,7 +172,7 @@ async function run() {
           transform: rotate(-5deg);
         }
         .tooltip-tag {
-          background: #ff2d75;
+          background: #005a9c;
           color: #fff;
           font-size: 13px;
           font-weight: 800;
@@ -180,7 +180,7 @@ async function run() {
           text-transform: uppercase;
           padding: 6px 14px;
           border-radius: 8px;
-          box-shadow: 0 4px 20px rgba(255, 45, 117, 0.7);
+          box-shadow: 0 4px 20px rgba(0, 90, 156, 0.7);
           white-space: nowrap;
           border: 1px solid rgba(255, 255, 255, 0.35);
           margin-top: 10px;

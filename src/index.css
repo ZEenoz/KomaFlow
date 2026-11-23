@@ -88,10 +88,10 @@
   --color-glass: #0B0C10;
   --color-ink: #111111;
   --color-vellum: #EFECE6;
-  /* Accent for text, icons and borders on paper. Same rose hue as dark mode. */
-  --color-editorial: #B82A52;
-  /* Accent for filled surfaces that carry a white label (4.8:1 with #fff). */
-  --color-accent-fill: #B82A52;
+  /* Cobalt accent for text, icons and borders on paper (5.4:1 on #E4E0D9). */
+  --color-editorial: #005A9C;
+  /* Cobalt fill for surfaces that carry a white label (7.1:1 with #fff). */
+  --color-accent-fill: #005A9C;
   /* Borders, dividers and the switch track. Never body text. */
   --color-dust: #A19F9A;
   /* Muted body/helper text. 4.6:1 on paper. */
@@ -110,8 +110,10 @@
   --color-glass: #151822;
   --color-ink: #E6E8EE;
   --color-vellum: #1A1E29;
-  --color-editorial: #E85C82;
-  --color-accent-fill: #D23360;
+  /* Sky keeps accent text/icons legible on the navy-black surface (9.2:1). */
+  --color-editorial: #60C1E5;
+  /* Filled accent stays cobalt so white labels keep 7.1:1 contrast. */
+  --color-accent-fill: #005A9C;
   --color-dust: #464C5B;
   --color-muted: #8B90A0;
 }
@@ -146,6 +148,10 @@ html.kites-extension-page, body.kites-extension-page {
 .kites-switch {
   @apply relative inline-flex items-center rounded-full transition-colors focus:outline-none cursor-pointer;
   background-color: var(--color-dust);
+}
+.kites-switch:focus-visible {
+  outline: 2px solid var(--color-editorial);
+  outline-offset: 2px;
 }
 .kites-switch[data-state="checked"] {
   background-color: var(--color-editorial);

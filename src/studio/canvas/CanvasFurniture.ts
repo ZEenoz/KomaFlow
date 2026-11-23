@@ -23,7 +23,7 @@ export class CanvasFurniture {
   public static drawSelectionFurniture(
     ctx: CanvasRenderingContext2D,
     obj: TextObject,
-    borderColor: string = '#e85c82'
+    borderColor: string = '#1b365d'
   ): void {
     const isSkipped = !!obj.isSkipped;
     const effectiveColor = isSkipped ? '#94a3b8' : borderColor;
@@ -39,7 +39,15 @@ export class CanvasFurniture {
       ctx.translate(-centerX, -centerY);
     }
 
-    // 1. Draw dashed selection boundary
+    // 1. Draw dashed selection boundary with a dual-tone stroke: the sky outer
+    // halo keeps it visible on dark artwork, while the deep-navy inner stroke
+    // keeps >= 5:1 contrast on white manga art.
+    if (!isSkipped) {
+      ctx.strokeStyle = 'rgba(96, 193, 229, 0.95)';
+      ctx.lineWidth = 4;
+      ctx.setLineDash([4, 4]);
+      ctx.strokeRect(-1.5, -1.5, obj.width + 3, obj.height + 3);
+    }
     ctx.strokeStyle = effectiveColor;
     ctx.lineWidth = 1.5;
     ctx.setLineDash(isSkipped ? [2, 3] : [4, 4]);
@@ -73,15 +81,22 @@ export class CanvasFurniture {
       ctx.setLineDash([]);
     }
 
-    // 2. Draw stem line to rotation handle
+    // 2. Draw stem line to rotation handle (sky halo + navy core)
+    ctx.beginPath();
+    ctx.strokeStyle = 'rgba(96, 193, 229, 0.95)';
+    ctx.lineWidth = 4;
+    ctx.moveTo(obj.width / 2, 0);
+    ctx.lineTo(obj.width / 2, -ROTATION_HANDLE_OFFSET);
+    ctx.stroke();
     ctx.beginPath();
     ctx.strokeStyle = effectiveColor;
+    ctx.lineWidth = 1.5;
     ctx.moveTo(obj.width / 2, 0);
     ctx.lineTo(obj.width / 2, -ROTATION_HANDLE_OFFSET);
     ctx.stroke();
 
     // 3. Draw rotation handle nub (circle with curved rotation arrow badge)
-    this.drawHandleNub(ctx, obj.width / 2, -ROTATION_HANDLE_OFFSET, '#e85c82', true, '⟳');
+    this.drawHandleNub(ctx, obj.width / 2, -ROTATION_HANDLE_OFFSET, '#1b365d', true, '⟳');
 
     // If rotated, show small angle tag above rotation nub
     if (obj.rotation) {
@@ -94,13 +109,13 @@ export class CanvasFurniture {
       const tagX = obj.width / 2 - tagW / 2;
       const tagY = -ROTATION_HANDLE_OFFSET - 18;
       ctx.fillStyle = '#12141c';
-      ctx.strokeStyle = effectiveColor;
+      ctx.strokeStyle = '#60c1e5';
       ctx.lineWidth = 1;
       ctx.beginPath();
       ctx.roundRect(tagX, tagY, tagW, tagH, 3);
       ctx.fill();
       ctx.stroke();
-      ctx.fillStyle = '#e85c82';
+      ctx.fillStyle = '#60c1e5';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.fillText(angleText, obj.width / 2, tagY + tagH / 2);
@@ -113,10 +128,10 @@ export class CanvasFurniture {
     const bottom = obj.height;
 
     // 4. Draw font-size scaling handle (top-right corner nub with 'A' badge)
-    this.drawHandleNub(ctx, right, 0, '#38bdf8', true, 'A');
+    this.drawHandleNub(ctx, right, 0, '#1b365d', true, 'A');
 
     // 5. Draw horizontal wrap handle (right midpoint nub with '↔' badge)
-    this.drawHandleNub(ctx, right, midY, '#e85c82', true, '↔');
+    this.drawHandleNub(ctx, right, midY, '#1b365d', true, '↔');
 
     // 6. Draw standard bounding handles
     this.drawHandleNub(ctx, 0, 0, effectiveColor);

@@ -55,7 +55,7 @@ const ROW_CLASS: Record<FontPickerDropdownProps['variant'], string> = {
 
 const ACTIVE_ROW_CLASS: Record<FontPickerDropdownProps['variant'], string> = {
   popup: 'bg-[var(--color-vellum)] text-[var(--color-editorial)] font-semibold',
-  studio: 'bg-[#141824] text-[#f4446d] font-semibold',
+  studio: 'bg-[#141824] text-[#60c1e5] font-semibold',
 };
 
 const SECTION_LABEL_CLASS: Record<FontPickerDropdownProps['variant'], string> = {
@@ -256,7 +256,7 @@ export const FontPickerDropdown: React.FC<FontPickerDropdownProps> = ({ selectio
                 e.stopPropagation();
                 void handleDelete(item.installed!);
               }}
-              className={`p-1 rounded-sm hover:text-[var(--color-editorial)] ${variant === 'studio' ? 'text-slate-500 hover:text-[#f4446d]' : 'text-[var(--color-muted)]'}`}
+              className={`p-1 rounded-sm hover:text-[var(--color-editorial)] ${variant === 'studio' ? 'text-slate-500 hover:text-[#60c1e5]' : 'text-[var(--color-muted)]'}`}
             >
               <Trash2 size={13} />
             </span>
@@ -297,7 +297,7 @@ export const FontPickerDropdown: React.FC<FontPickerDropdownProps> = ({ selectio
 
           <div className="overflow-y-auto flex-1 p-1 custom-scrollbar max-h-[300px]">
             {error && (
-              <p className={`px-2 py-1 text-[11px] ${variant === 'studio' ? 'text-[#f4446d]' : 'text-[var(--color-editorial)]'}`}>{error}</p>
+              <p className={`px-2 py-1 text-[11px] ${variant === 'studio' ? 'text-[#60c1e5]' : 'text-[var(--color-editorial)]'}`}>{error}</p>
             )}
 
             {grouped.presets.length > 0 && (
@@ -332,7 +332,7 @@ export const FontPickerDropdown: React.FC<FontPickerDropdownProps> = ({ selectio
                         e.stopPropagation();
                         if (item.catalog) void handleDownload(item.catalog);
                       }}
-                      className={`p-1.5 rounded-sm ${variant === 'studio' ? 'text-slate-400 hover:text-[#f4446d]' : 'text-[var(--color-muted)] hover:text-[var(--color-editorial)]'} disabled:opacity-40`}
+                      className={`p-1.5 rounded-sm ${variant === 'studio' ? 'text-slate-400 hover:text-[#60c1e5]' : 'text-[var(--color-muted)] hover:text-[var(--color-editorial)]'} disabled:opacity-40`}
                     >
                       <Download size={14} className={downloading.has(item.catalog?.id ?? '') ? 'animate-pulse' : ''} />
                     </button>

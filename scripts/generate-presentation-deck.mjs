@@ -10,8 +10,8 @@ const rootDir = path.resolve(__dirname, '..');
 const pres = new pptxgen();
 pres.layout = 'LAYOUT_WIDE'; // 13.33 x 7.5 inches
 pres.author = 'Unheat';
-pres.company = 'Kites Project';
-pres.title = 'Kites: Spatial In-Browser Manga Translator — Presentation Deck';
+pres.company = 'KomaFlow Project';
+pres.title = 'KomaFlow: Spatial In-Browser Manga Translator — Presentation Deck';
 
 // Palette Constants
 const COLOR = {
@@ -23,7 +23,7 @@ const COLOR = {
   TEXT_DIM: '64748B',
   ACCENT_SKY: '38BDF8',
   ACCENT_INDIGO: '818CF8',
-  ACCENT_PINK: 'FF2D75',
+  ACCENT_HIGHLIGHT: '60C1E5',
   ACCENT_EMERALD: '10B981',
   BORDER: '334155'
 };
@@ -92,7 +92,7 @@ s1.addText('⚡ AI BUILDERS HACKATHON 2026', {
 });
 
 // Main Title
-s1.addText('Kites', {
+s1.addText('KomaFlow', {
   x: M, y: 1.8, w: 6.0, h: 1.1,
   fontSize: 54, fontFace: 'Segoe UI', bold: true,
   color: COLOR.TEXT_WHITE
@@ -122,9 +122,9 @@ s1.addText([
   { text: 'Creator: ', options: { bold: true, color: COLOR.TEXT_WHITE } },
   { text: 'Unheat (dangtruongan)\n', options: { color: COLOR.ACCENT_SKY } },
   { text: 'Live Demo: ', options: { bold: true, color: COLOR.TEXT_WHITE } },
-  { text: 'https://kites-translator.pages.dev  •  ', options: { color: COLOR.TEXT_MUTED } },
+  { text: 'https://github.com/ZEenoz/KomaFlow  •  ', options: { color: COLOR.TEXT_MUTED } },
   { text: 'GitHub: ', options: { bold: true, color: COLOR.TEXT_WHITE } },
-  { text: 'Unheat/Kites', options: { color: COLOR.TEXT_MUTED } }
+  { text: 'Unheat/KomaFlow', options: { color: COLOR.TEXT_MUTED } }
 ], {
   x: M + 0.25, y: 5.75, w: 5.3, h: 0.8,
   fontSize: 12, fontFace: 'Segoe UI'
@@ -196,7 +196,7 @@ problems.forEach((p, idx) => {
 // -------------------------------------------------------------
 const s3 = pres.addSlide();
 s3.background = { color: COLOR.BG_DARK };
-addSlideHeader(s3, '02 · Solution Overview', 'Kites: 100% Local-First In-Browser AI Translation', 'An ultra-lightweight Chrome Extension running neural computer vision, generative inpainting, and typesetting right inside your browser.');
+addSlideHeader(s3, '02 · Solution Overview', 'KomaFlow: 100% Local-First In-Browser AI Translation', 'An ultra-lightweight Chrome Extension running neural computer vision, generative inpainting, and typesetting right inside your browser.');
 
 const solutionPillars = [
   {
@@ -219,7 +219,7 @@ const solutionPillars = [
   },
   {
     badge: 'COMIC-AWARE',
-    badgeColor: COLOR.ACCENT_PINK,
+    badgeColor: COLOR.ACCENT_HIGHLIGHT,
     title: 'Authentic Typesetting',
     desc: 'Measures balloon shapes, balances line wrapping, auto-sizes dialogue fonts, and bakes translated text cleanly into comic panels.'
   }
@@ -266,7 +266,7 @@ solutionPillars.forEach((p, idx) => {
 // -------------------------------------------------------------
 const s4 = pres.addSlide();
 s4.background = { color: COLOR.BG_DARK };
-addSlideHeader(s4, '03 · Target Users', 'Who Needs Kites: Global Manga & Web Comic Ecosystem', 'Serving millions of international comic enthusiasts, social media readers, and scanlation creators.');
+addSlideHeader(s4, '03 · Target Users', 'Who Needs KomaFlow: Global Manga & Web Comic Ecosystem', 'Serving millions of international comic enthusiasts, social media readers, and scanlation creators.');
 
 const userPersonas = [
   {
@@ -285,7 +285,7 @@ const userPersonas = [
     num: '03',
     role: 'Scanlators & Content Creators',
     need: 'Manual scanlation requires hours of tedious Photoshop editing: cloning stamps, redrawing screentones, and retyping fonts.',
-    kitesValue: 'Kites Studio provides an interactive 8-point bounding box editor to polish translations, adjust balloon text, and export 1:1 lossless PNGs.'
+    kitesValue: 'KomaFlow Studio provides an interactive 8-point bounding box editor to polish translations, adjust balloon text, and export 1:1 lossless PNGs.'
   }
 ];
 
@@ -323,7 +323,7 @@ userPersonas.forEach((u, idx) => {
     color: COLOR.TEXT_MUTED, lineSpacing: 16
   });
 
-  s4.addText('HOW KITES EMPOWERS THEM:', {
+  s4.addText('HOW KOMAFLOW EMPOWERS THEM:', {
     x: cardX + 0.3, y: cardY + 3.1, w: 3.25, h: 0.3,
     fontSize: 10, fontFace: 'Segoe UI', bold: true,
     color: COLOR.ACCENT_EMERALD
@@ -369,7 +369,7 @@ const featureItems = [
     desc: 'Keep action badges pinned across all comic panels, or enable Viewport Auto-Translate to queue chapters automatically as you scroll.'
   },
   {
-    title: '🛠️ Built-in Kites Studio',
+    title: '🛠️ Built-in KomaFlow Studio',
     desc: 'Triple-view inspection (Original, Clean Inpaint, Typeset), 8-point interactive bounding box resizing, and lossless 1:1 PNG export.'
   },
   {
@@ -530,7 +530,7 @@ archSteps.forEach((a, idx) => {
 // -------------------------------------------------------------
 const s8 = pres.addSlide();
 s8.background = { color: COLOR.BG_DARK };
-addSlideHeader(s8, '07 · AI Technologies', 'The 4 Core Pillars of the Kites AI Engine', 'Orchestrating computer vision, graph clustering, generative diffusion, and LLM inference.');
+addSlideHeader(s8, '07 · AI Technologies', 'The 4 Core Pillars of the KomaFlow AI Engine', 'Orchestrating computer vision, graph clustering, generative diffusion, and LLM inference.');
 
 const aiPillars = [
   {
@@ -629,16 +629,16 @@ stats.forEach((st, idx) => {
   });
 });
 
-// Bottom Comparison: Before Kites vs With Kites
+// Bottom Comparison: Before KomaFlow vs With KomaFlow
 s9.addShape(pres.shapes.ROUNDED_RECTANGLE, {
   x: M, y: 4.0, w: 5.9, h: 2.7,
   fill: { color: '1A1523' },
   line: { color: '4B1A2E', width: 1 },
   rectRadius: 0.15
 });
-s9.addText('WITHOUT KITES (STATUS QUO)', {
+s9.addText('WITHOUT KOMAFLOW (STATUS QUO)', {
   x: M + 0.3, y: 4.2, w: 5.3, h: 0.3,
-  fontSize: 12, fontFace: 'Segoe UI', bold: true, color: COLOR.ACCENT_PINK
+  fontSize: 12, fontFace: 'Segoe UI', bold: true, color: COLOR.ACCENT_HIGHLIGHT
 });
 s9.addText([
   { text: '• $10/month cloud subscription fees with token limits', options: { breakLine: true } },
@@ -656,7 +656,7 @@ s9.addShape(pres.shapes.ROUNDED_RECTANGLE, {
   line: { color: '134E4A', width: 1 },
   rectRadius: 0.15
 });
-s9.addText('WITH KITES (LOCAL-FIRST ERA)', {
+s9.addText('WITH KOMAFLOW (LOCAL-FIRST ERA)', {
   x: 7.13, y: 4.2, w: 5.3, h: 0.3,
   fontSize: 12, fontFace: 'Segoe UI', bold: true, color: COLOR.ACCENT_EMERALD
 });
@@ -675,7 +675,7 @@ s9.addText([
 // -------------------------------------------------------------
 const s10 = pres.addSlide();
 s10.background = { color: COLOR.BG_DARK };
-addSlideHeader(s10, '09 · Roadmap & Future Vision', 'Scaling Kites: Next Milestones & Community Launch', 'Expanding platform reach, multi-language OCR coverage, and creator tooling.');
+addSlideHeader(s10, '09 · Roadmap & Future Vision', 'Scaling KomaFlow: Next Milestones & Community Launch', 'Expanding platform reach, multi-language OCR coverage, and creator tooling.');
 
 const roadmap = [
   {
@@ -683,7 +683,7 @@ const roadmap = [
     status: 'COMPLETED',
     statusColor: COLOR.ACCENT_EMERALD,
     title: 'Core Engine & Release v1.0.3',
-    items: ['WebGPU ONNX PaddleOCR & LaMa Inpainting', 'Kruskal-MST spatial bubble clustering', 'Interactive Kites Studio 8-point editor', 'Pre-built zip & Chrome Web Store submission']
+    items: ['WebGPU ONNX PaddleOCR & LaMa Inpainting', 'Kruskal-MST spatial bubble clustering', 'Interactive KomaFlow Studio 8-point editor', 'Pre-built zip & Chrome Web Store submission']
   },
   {
     quarter: 'Q4 2026',
@@ -754,10 +754,10 @@ s10.addShape(pres.shapes.ROUNDED_RECTANGLE, {
 });
 
 s10.addText([
-  { text: 'Try Kites Today: ', options: { bold: true, color: COLOR.TEXT_WHITE } },
-  { text: 'https://kites-translator.pages.dev  •  ', options: { color: COLOR.ACCENT_SKY } },
+  { text: 'Try KomaFlow Today: ', options: { bold: true, color: COLOR.TEXT_WHITE } },
+  { text: 'https://github.com/ZEenoz/KomaFlow  •  ', options: { color: COLOR.ACCENT_SKY } },
   { text: 'GitHub: ', options: { bold: true, color: COLOR.TEXT_WHITE } },
-  { text: 'https://github.com/Unheat/Kites  •  ', options: { color: COLOR.TEXT_MUTED } },
+  { text: 'https://github.com/ZEenoz/KomaFlow  •  ', options: { color: COLOR.TEXT_MUTED } },
   { text: 'Contact: ', options: { bold: true, color: COLOR.TEXT_WHITE } },
   { text: 'andangtruong085@gmail.com', options: { color: COLOR.TEXT_MUTED } }
 ], {
