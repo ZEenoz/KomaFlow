@@ -118,11 +118,13 @@ describe('BatchScanPanel UI & Controls', () => {
       await Promise.resolve();
     });
 
-    const fastScanBtn = container.querySelector('button[title*="Auto-scroll reader page"]') as HTMLButtonElement;
-    expect(fastScanBtn).not.toBeNull();
+    const fastScanBtn = Array.from(container.querySelectorAll('button')).find(
+      (btn) => btn.textContent?.trim() === 'Fast Scan'
+    ) as HTMLButtonElement | undefined;
+    expect(fastScanBtn).toBeDefined();
 
     await act(async () => {
-      fastScanBtn.click();
+      fastScanBtn?.click();
     });
 
     expect(sendMessageMock).toHaveBeenCalledWith(

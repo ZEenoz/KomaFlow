@@ -4,6 +4,7 @@ import {
   sortScannedImages,
   filterOutlierThumbnails,
   filterResolutionOutliers,
+  fastScrollPreload,
   forcePromoteLazyAttributes,
   scanChapterPages,
   type ScannedPageImage,
@@ -140,5 +141,61 @@ describe('scanner unit tests', () => {
     expect(unloadedLazy.loading).toBe('eager');
     expect(unloadedLazy.getAttribute('srcset')).toBe('https://example.com/ch/page-2.jpg 1200w');
     expect(unloadedLazy.src).toBe('https://example.com/ch/page-2.jpg');
+  });
+
+  it('fast scan keeps pages a virtualized reader unmounts once scroll is restored', async () => {
+    const PAGE_HEIGHT = 1000;
+    const PAGE_COUNT = 8;
+    const WINDOW_SIZE = 2;
+
+    const reader = document.createElement('div');
+    reader.className = 'chapter-reader';
+    reader.style.overflowY = 'auto';
+    document.body.appendChild(reader);
+
+    Object.defineProperty(reader, 'clientHeight', { configurable: true, value: PAGE_HEIGHT });
+    Object.defineProperty(reader, 'scrollHeight', {
+      configurable: true,
+      get: () => PAGE_COUNT * PAGE_HEIGHT,
+    });
+
+    let scrollTop = 0;
+    const mountWindow = () => {
+      reader.innerHTML = '';
+      const firstMounted = Math.floor(scrollTop / PAGE_HEIGHT);
+      for (let index = firstMounted; index < Math.min(PAGE_COUNT, firstMounted + WINDOW_SIZE); index += 1) {
+        const img = document.createElement('img');
+        img.src = `https://example.com/ch/page-${index + 1}.jpg`;
+        const top = index * PAGE_HEIGHT - scrollTop;
+        vi.spyOn(img, 'getBoundingClientRect').mockReturnValue({
+          x: 0, y: top, top, left: 0, right: 800, bottom: top + PAGE_HEIGHT,
+          width: 800, height: PAGE_HEIGHT, toJSON: () => ({}),
+        } as DOMRect);
+        reader.appendChild(img);
+      }
+    };
+    Object.defineProperty(reader, 'scrollTop', {
+      configurable: true,
+      get: () => scrollTop,
+      set: (value: number) => {
+        scrollTop = value;
+        mountWindow();
+      },
+    });
+    mountWindow();
+
+    const scrollToSpy = vi.spyOn(window, 'scrollTo').mockImplementation(() => {});
+
+    const pages = await fastScrollPreload(document);
+
+    // Pages 3-8 exist only while the sweep is inside them; a scan after scroll restore sees just 1-2.
+    expect(pages.map((page) => page.url)).toEqual(
+      Array.from({ length: PAGE_COUNT }, (_, index) => `https://example.com/ch/page-${index + 1}.jpg`)
+    );
+    expect(pages.map((page) => page.top)).toEqual(
+      Array.from({ length: PAGE_COUNT }, (_, index) => index * PAGE_HEIGHT)
+    );
+    expect(reader.scrollTop).toBe(0);
+    scrollToSpy.mockRestore();
   });
 });

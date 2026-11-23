@@ -35,6 +35,21 @@ const LAZY_IMAGE_ATTRIBUTES = [
 ];
 
 const LAZY_SRCSET_ATTRIBUTES = ['data-srcset', 'data-lazy-srcset'];
+
+/** Fraction of the viewport one auto-scroll step advances, small enough to keep every lazy target in view. */
+const FAST_SCROLL_STEP_VIEWPORT_RATIO = 0.85;
+/** Lower bound on the auto-scroll step so tall viewports still sweep a chapter in a bounded number of cycles. */
+const FAST_SCROLL_MIN_STEP_PX = 800;
+/** Settle time after each step; IntersectionObserver callbacks and framework renders need a task to run. */
+const FAST_SCROLL_STEP_SETTLE_MS = 40;
+/** Wall-clock budget for one sweep; an infinite-scroll page must never hold the popup request forever. */
+const FAST_SCROLL_MAX_DURATION_MS = 12000;
+/** Cycle guard independent of the clock (defensive; the budget normally binds first). */
+const FAST_SCROLL_MAX_CYCLES = 400;
+/** Consecutive cycles without a new page and without scroll growth before the sweep stops early. */
+const FAST_SCROLL_STALL_CYCLES = 12;
+/** Extra settle time before the final harvest so late observers and renders are still captured. */
+const FAST_SCROLL_FINAL_SETTLE_MS = 120;
 const UI_NOISE_ASSET_RE = /(?:^|\/|_|-)(?:avatar|favicon|logo|icon|badge|emoji|spinner|loading)(?:[-_.]|$)/i;
 const AD_NOISE_SELECTOR = AD_NOISE_CONTAINER_SELECTORS.join(', ');
 const READER_CONTAINER_SELECTOR = MANGA_READER_CONTAINER_SELECTORS.join(', ');
@@ -182,33 +197,77 @@ export function forcePromoteLazyAttributes(root: Document | Element = document):
 }
 
 /**
- * Programmatically scrolls down the page in small increments to trigger lazy-loads
- * and then restores the user's scroll position.
- * Ported from XianScan fastScrollPreload.
+ * Promise-based timer used to yield to the page between auto-scroll steps.
+ *
+ * @param ms - Delay in milliseconds.
+ * @returns Promise resolving after the delay.
+ */
+const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Auto-scrolls the page (or its inner reader container) to mount lazy and virtualized
+ * chapter pages, harvesting the DOM after every step, then restores the user's scroll
+ * position.
+ *
+ * WORKAROUND: [Virtualized readers unmount what the sweep just loaded] -> The previous
+ * implementation scrolled to the bottom and scanned once after restoring the scroll
+ * position. Readers that recycle page nodes (react-window/virtuoso, paged viewers, and
+ * sites that detach pages on scroll-back) had already removed every page the sweep
+ * mounted, so Fast Scan reported only the first screenful. Harvesting into a keyed map
+ * after each step keeps those pages, matching the documented requirement to "accumulate
+ * eligible discoveries during the scan" (docs/dev-history/plans/
+ * reader-studio-runtime-improvement-plan.md §5.6).
  *
  * @param root - Document to scroll.
  * @param customSelector - Optional custom selector override.
  * @param isTranslatedCheck - Optional check if a URL is translated.
- * @returns Scanned images after fast scroll.
+ * @returns Accumulated, filtered and spatially ordered chapter images.
  */
 export async function fastScrollPreload(
   root: Document = document,
   customSelector?: string,
   isTranslatedCheck?: (url: string) => { isTranslated: boolean; translatedUrl?: string }
 ): Promise<ScannedPageImage[]> {
+  const discovered = new Map<string, ScannedPageImage>();
+
+  /**
+   * Harvests the currently mounted DOM into the accumulated discovery map.
+   *
+   * @param scrollOffsetY - Scroll offset of the measured root; inner containers add their own scrollTop.
+   * @returns Number of images discovered for the first time.
+   */
+  const harvest = (scrollOffsetY?: number): number => {
+    let added = 0;
+    for (const candidate of collectChapterCandidates(root, customSelector, isTranslatedCheck, scrollOffsetY)) {
+      const known = discovered.get(candidate.id);
+      if (!known) {
+        discovered.set(candidate.id, candidate);
+        added += 1;
+      } else if (known.width === 0 && candidate.width > 0) {
+        // A later observation measured the element the first one saw unloaded.
+        discovered.set(candidate.id, candidate);
+      } else {
+        known.isTranslated = known.isTranslated || candidate.isTranslated;
+        known.translatedUrl = known.translatedUrl ?? candidate.translatedUrl;
+      }
+    }
+    return added;
+  };
+
+  harvest();
   forcePromoteLazyAttributes(root);
 
   const viewportH = typeof window !== 'undefined' && window.innerHeight ? window.innerHeight : 1200;
-  const step = Math.max(800, Math.round(viewportH * 0.85));
-  const delay = 15;
-  const maxDurationMs = 6000;
+  const step = Math.max(FAST_SCROLL_MIN_STEP_PX, Math.round(viewportH * FAST_SCROLL_STEP_VIEWPORT_RATIO));
   const startedAt = Date.now();
   const initScrollY = typeof window !== 'undefined' ? window.scrollY : 0;
+  const windowOffset = (): number => (typeof window !== 'undefined' ? window.scrollY : 0);
 
   type ScrollTarget = {
     getMax: () => number;
     init: number;
     set: (y: number) => void;
+    offset: () => number;
   };
   const targets: ScrollTarget[] = [];
 
@@ -216,6 +275,7 @@ export async function fastScrollPreload(
     targets.push({
       getMax: () => Math.max(document.body?.scrollHeight || 0, document.documentElement?.scrollHeight || 0),
       init: initScrollY,
+      offset: windowOffset,
       set: (y) => {
         window.scrollTo({ top: y, behavior: 'instant' as ScrollBehavior });
         window.dispatchEvent(new Event('scroll', { bubbles: true }));
@@ -228,6 +288,8 @@ export async function fastScrollPreload(
     targets.push({
       getMax: () => inner.scrollHeight,
       init: inner.scrollTop,
+      // Container scrolling shifts rects without moving the window, so its own offset must be added.
+      offset: () => windowOffset() + inner.scrollTop,
       set: (y) => {
         inner.scrollTop = y;
         inner.dispatchEvent(new Event('scroll', { bubbles: true }));
@@ -237,28 +299,40 @@ export async function fastScrollPreload(
 
   for (const target of targets) {
     let currentY = 0;
-    let maxCycles = 180;
+    let cycles = 0;
+    let stalled = 0;
     try {
-      while (currentY < target.getMax() && maxCycles > 0 && Date.now() - startedAt < maxDurationMs) {
-        currentY += step;
+      while (cycles < FAST_SCROLL_MAX_CYCLES && Date.now() - startedAt < FAST_SCROLL_MAX_DURATION_MS) {
+        const beforeMax = target.getMax();
+        if (beforeMax <= 0) break;
+        if (currentY < beforeMax) currentY = Math.min(currentY + step, beforeMax);
         target.set(currentY);
-        maxCycles--;
+        cycles += 1;
 
         forcePromoteLazyAttributes(root);
-        await new Promise((r) => setTimeout(r, delay));
+        await sleep(FAST_SCROLL_STEP_SETTLE_MS);
+
+        const grew = target.getMax() > beforeMax;
+        const added = harvest(target.offset());
+        stalled = added === 0 && !grew && currentY >= beforeMax ? stalled + 1 : 0;
+        if (stalled >= FAST_SCROLL_STALL_CYCLES) break;
       }
 
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new Event('resize'));
         window.dispatchEvent(new Event('scroll'));
       }
-      await new Promise((r) => setTimeout(r, 40));
+      await sleep(FAST_SCROLL_STEP_SETTLE_MS);
+      harvest(target.offset());
     } finally {
       target.set(target.init);
     }
   }
 
-  return scanChapterPages(root, customSelector, isTranslatedCheck);
+  await sleep(FAST_SCROLL_FINAL_SETTLE_MS);
+  harvest();
+
+  return finalizeScannedImages(Array.from(discovered.values()));
 }
 
 /**
@@ -287,18 +361,19 @@ function isPendingChapterImage(img: HTMLImageElement, rawUrl: string, matchedCus
 }
 
 /**
- * Scans the active page DOM for eligible manga/comic images, computes their
- * document coordinates, and returns a clean, deduplicated, sorted list.
+ * Collects eligible chapter image candidates from the DOM without filtering or sorting.
  *
  * @param root - Document or container to scan.
  * @param customSelector - Optional custom selector override.
  * @param isTranslatedCheck - Optional check if a URL is translated.
- * @returns Ordered array of ScannedPageImage.
+ * @param scrollOffsetY - Already-applied scroll offset; defaults to the window scroll position.
+ * @returns Deduplicated candidates in DOM discovery order.
  */
-export function scanChapterPages(
+function collectChapterCandidates(
   root: Document | Element = document,
   customSelector?: string,
-  isTranslatedCheck?: (url: string) => { isTranslated: boolean; translatedUrl?: string }
+  isTranslatedCheck?: (url: string) => { isTranslated: boolean; translatedUrl?: string },
+  scrollOffsetY?: number
 ): ScannedPageImage[] {
   const mediaTargets = discoverMediaTargets(root, customSelector);
   const seenUrls = new Set<string>();
@@ -307,7 +382,7 @@ export function scanChapterPages(
   let domOrder = 0;
 
   const scrollX = typeof window !== 'undefined' ? window.scrollX : 0;
-  const scrollY = typeof window !== 'undefined' ? window.scrollY : 0;
+  const scrollY = scrollOffsetY ?? (typeof window !== 'undefined' ? window.scrollY : 0);
 
   const pushCandidate = (rawUrl: string, el: Element | null, imgEl?: HTMLImageElement): void => {
     if (!rawUrl || isPlaceholderSource(rawUrl)) return;
@@ -363,7 +438,32 @@ export function scanChapterPages(
     pushCandidate(rawUrl, img, img);
   }
 
-  // Filter noise and sort spatially
-  const clean = filterResolutionOutliers(filterOutlierThumbnails(scanned));
-  return sortScannedImages(clean);
+  return scanned;
+}
+
+/**
+ * Applies the noise filters and spatial ordering shared by every chapter scan.
+ *
+ * @param images - Raw candidates in any order.
+ * @returns Clean, spatially sorted chapter images.
+ */
+function finalizeScannedImages(images: ScannedPageImage[]): ScannedPageImage[] {
+  return sortScannedImages(filterResolutionOutliers(filterOutlierThumbnails(images)));
+}
+
+/**
+ * Scans the active page DOM for eligible manga/comic images, computes their
+ * document coordinates, and returns a clean, deduplicated, sorted list.
+ *
+ * @param root - Document or container to scan.
+ * @param customSelector - Optional custom selector override.
+ * @param isTranslatedCheck - Optional check if a URL is translated.
+ * @returns Ordered array of ScannedPageImage.
+ */
+export function scanChapterPages(
+  root: Document | Element = document,
+  customSelector?: string,
+  isTranslatedCheck?: (url: string) => { isTranslated: boolean; translatedUrl?: string }
+): ScannedPageImage[] {
+  return finalizeScannedImages(collectChapterCandidates(root, customSelector, isTranslatedCheck));
 }

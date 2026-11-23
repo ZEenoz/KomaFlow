@@ -554,7 +554,7 @@ export default function BatchScanPanel() {
                 onClick={handleFastScan}
                 disabled={isFastScanning || isScanning}
                 className="px-2 py-1 rounded bg-[var(--color-paper)] hover:bg-[var(--color-accent-fill)] hover:text-white border border-[var(--color-dust)] border-opacity-30 font-semibold transition-all flex items-center gap-1 text-[11px] cursor-pointer shadow-sm disabled:opacity-50"
-                title="Auto-scroll reader page to mount all lazy-loaded comic panels"
+                title="Scroll the reader and collect every page it mounts (lazy, virtualized or paged)"
               >
                 {isFastScanning ? (
                   <Loader size={12} className="animate-spin" />
