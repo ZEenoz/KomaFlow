@@ -18,8 +18,8 @@ This guide walks you through setting up your local environment to develop, build
 
 ### 1. Clone the Repository
 ```bash
-git clone https://github.com/Unheat/Kites.git
-cd Kites
+git clone https://github.com/ZEenoz/KomaFlow.git
+cd KomaFlow
 ```
 
 ### 2. Node.js Version Check

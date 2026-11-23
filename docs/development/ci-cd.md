@@ -9,7 +9,7 @@
 
 | Workflow | File | Triggers | Purpose |
 | --- | --- | --- | --- |
-| **Kites CI/CD** | [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml) | push/PR → `main` | Lint, unit tests, docs gate, API reference, production build, artifact upload |
+| **KomaFlow CI/CD** | [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml) | push/PR → `main` | Lint, unit tests, docs gate, API reference, production build, artifact upload |
 | **Pipeline Integration Smoke Test** | [`.github/workflows/pipeline-smoke.yml`](../../.github/workflows/pipeline-smoke.yml) | push/PR touching `src/offscreen/**`, `src/shared/**`, `src/test/**`; manual dispatch | CPU-tier full-pipeline smoke matrix + visual pipeline suite |
 | **Translation Gate** | [`.github/workflows/translation-gate.yml`](../../.github/workflows/translation-gate.yml) | push/PR touching `src/offscreen/**`, `src/shared/**`, the gate receipt or script; manual dispatch | Fails a pipeline change that ships without a fresh real-browser measurement, or that regresses past tolerance ([guide](translation-gate.md)) |
 | **Validate Model Registry URLs** | [`.github/workflows/validate-model-registry.yml`](../../.github/workflows/validate-model-registry.yml) | push/PR, weekly (Sun 00:00 UTC) | Headless check that every external model URL in the OCR/inpaint/bubble/color registries resolves |
@@ -30,7 +30,7 @@ Job `test-and-build` runs, in order:
 3. **Documentation gate** — `npm run docs:check` (undocumented-symbol ratchet, then TSDoc shape).
 4. **API reference** — `npm run docs:api` (TypeDoc; must generate without validation warnings).
 5. **Build** — `npm run build` (`copy-wasm` → `tsc -b` → `vite build`). TypeScript project checks fail the build.
-6. **Artifact** — `dist/` uploaded as `kites-extension-build`, 7-day retention.
+6. **Artifact** — `dist/` uploaded as `komaflow-extension-build`, 7-day retention.
 
 PRs to `main` must pass this workflow before merge.
 
@@ -41,7 +41,7 @@ Runs the real offscreen pipeline headlessly on CPU:
 - `npm run test:pipeline:smoke` — `src/test/pipelineSmokeMatrix.ts`, multi-tier CPU matrix (Tier 2).
 - `npm run test:visual:pipeline` — `src/test/pipelineVisualTest.ts`, emits baked result images.
 
-**Model weight cache:** `src/test/models` cached under key `kites-smoke-models-v1`. Bump the key suffix when the required model set changes.
+**Model weight cache:** `src/test/models` cached under key `komaflow-smoke-models-v1`. Bump the key suffix when the required model set changes.
 
 **Artifacts:** baked smoke/pipeline images are uploaded `if: always()` so a failed page can be inspected without a local rerun.
 
@@ -69,10 +69,10 @@ Worker secrets are write-only, so the only proof a provider key is alive is lett
   ```bash
   openssl rand -hex 32 | npx wrangler versions secret put PROVIDER_HEALTH_TOKEN --cwd worker
   npx wrangler versions deploy <version-id>@100% --cwd worker -y
-  gh secret set PROVIDER_HEALTH_TOKEN --repo Unheat/Kites
+  gh secret set PROVIDER_HEALTH_TOKEN --repo ZEenoz/KomaFlow
   ```
-  Never print the value into a log, commit, or chat transcript. A missing GitHub secret is CI wiring, not a dead credential: the job fails immediately saying so.
-- **Fork safety:** the job runs only on `Unheat/Kites`, because forks cannot read these secrets.
+  Never print the value into a log, commit, or chat transcript. A missing GitHub secret is CI wiring, not a dead credential: the job skips with a notice instead of failing.
+- **Fork safety:** the job runs only on `ZEenoz/KomaFlow`; without `PROVIDER_HEALTH_TOKEN` it skips green rather than failing every schedule.
 
 ## 5. Release Process (Extension)
 

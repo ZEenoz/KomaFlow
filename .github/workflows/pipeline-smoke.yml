@@ -42,7 +42,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: src/test/models
-          key: kites-smoke-models-v1
+          key: komaflow-smoke-models-v1
 
       - name: Run Pipeline Smoke Matrix
         run: npm run test:pipeline:smoke

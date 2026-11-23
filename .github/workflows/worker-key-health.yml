@@ -25,24 +25,35 @@ jobs:
   key-health:
     name: Probe live provider credentials
     runs-on: ubuntu-latest
-    # Forks cannot hold this repository's secrets; skipping beats a red X nobody can fix.
-    if: github.repository == 'Unheat/Kites'
+    # Probing needs PROVIDER_HEALTH_TOKEN; without it the job skips green instead of failing a schedule nobody can fix.
+    if: github.repository == 'ZEenoz/KomaFlow'
     steps:
-      - name: Fetch credential health report
+      - name: Check provider health secret
+        id: secret_check
         env:
           PROVIDER_HEALTH_TOKEN: ${{ secrets.PROVIDER_HEALTH_TOKEN }}
         run: |
           set -euo pipefail
           if [ -z "${PROVIDER_HEALTH_TOKEN}" ]; then
-            echo "::error::Missing repository secret PROVIDER_HEALTH_TOKEN. It must equal the Worker secret of the same name; see docs/development/ci-cd.md section 4.1."
-            exit 1
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::PROVIDER_HEALTH_TOKEN is not configured; skipping provider health probe."
+          else
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
           fi
+
+      - name: Fetch credential health report
+        if: steps.secret_check.outputs.enabled == 'true'
+        env:
+          PROVIDER_HEALTH_TOKEN: ${{ secrets.PROVIDER_HEALTH_TOKEN }}
+        run: |
+          set -euo pipefail
           curl -sS --fail-with-body --max-time 90 \
             -H "x-provider-health-token: ${PROVIDER_HEALTH_TOKEN}" \
             "https://api.12094852.xyz/internal/provider-health" \
             -o report.json
 
       - name: Print report
+        if: steps.secret_check.outputs.enabled == 'true'
         run: |
           set -euo pipefail
           jq -r '"total=\(.summary.total) healthy=\(.summary.healthy) broken=\(.summary.broken) config=\(.summary.configIssue) unusable=\(.summary.unusable) unknown=\(.summary.unknown)"' report.json
@@ -56,6 +67,7 @@ jobs:
           } >> "${GITHUB_STEP_SUMMARY}"
 
       - name: Gate on credential failures
+        if: steps.secret_check.outputs.enabled == 'true'
         run: |
           set -euo pipefail
           broken=$(jq '.summary.broken' report.json)
