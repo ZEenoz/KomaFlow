@@ -50,6 +50,8 @@ const FAST_SCROLL_MAX_CYCLES = 400;
 const FAST_SCROLL_STALL_CYCLES = 12;
 /** Extra settle time before the final harvest so late observers and renders are still captured. */
 const FAST_SCROLL_FINAL_SETTLE_MS = 120;
+/** Minimum spacing between progress callbacks so the popup is not flooded once per step. */
+const FAST_SCROLL_PROGRESS_INTERVAL_MS = 200;
 const UI_NOISE_ASSET_RE = /(?:^|\/|_|-)(?:avatar|favicon|logo|icon|badge|emoji|spinner|loading)(?:[-_.]|$)/i;
 const AD_NOISE_SELECTOR = AD_NOISE_CONTAINER_SELECTORS.join(', ');
 const READER_CONTAINER_SELECTOR = MANGA_READER_CONTAINER_SELECTORS.join(', ');
@@ -205,6 +207,16 @@ export function forcePromoteLazyAttributes(root: Document | Element = document):
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
 /**
+ * Cooperative hooks for a long Fast Scan sweep.
+ */
+export interface FastScrollOptions {
+  /** Checked between steps; returning true stops the sweep and keeps what was found so far. */
+  isCancelled?: () => boolean;
+  /** Called with the accumulated discovery count, throttled to {@link FAST_SCROLL_PROGRESS_INTERVAL_MS}. */
+  onProgress?: (discovered: number) => void;
+}
+
+/**
  * Auto-scrolls the page (or its inner reader container) to mount lazy and virtualized
  * chapter pages, harvesting the DOM after every step, then restores the user's scroll
  * position.
@@ -221,14 +233,32 @@ const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout
  * @param root - Document to scroll.
  * @param customSelector - Optional custom selector override.
  * @param isTranslatedCheck - Optional check if a URL is translated.
+ * @param options - Optional cancellation and progress hooks.
  * @returns Accumulated, filtered and spatially ordered chapter images.
  */
 export async function fastScrollPreload(
   root: Document = document,
   customSelector?: string,
-  isTranslatedCheck?: (url: string) => { isTranslated: boolean; translatedUrl?: string }
+  isTranslatedCheck?: (url: string) => { isTranslated: boolean; translatedUrl?: string },
+  options?: FastScrollOptions
 ): Promise<ScannedPageImage[]> {
   const discovered = new Map<string, ScannedPageImage>();
+  const isCancelled = options?.isCancelled ?? ((): boolean => false);
+  let lastProgressAt = 0;
+
+  /**
+   * Reports the running discovery count, throttled so the popup is not flooded per step.
+   *
+   * @param force - Emit even when the throttle window has not elapsed.
+   * @returns Nothing.
+   */
+  const reportProgress = (force = false): void => {
+    if (!options?.onProgress) return;
+    const now = Date.now();
+    if (!force && now - lastProgressAt < FAST_SCROLL_PROGRESS_INTERVAL_MS) return;
+    lastProgressAt = now;
+    options.onProgress(discovered.size);
+  };
 
   /**
    * Harvests the currently mounted DOM into the accumulated discovery map.
@@ -256,6 +286,7 @@ export async function fastScrollPreload(
 
   harvest();
   forcePromoteLazyAttributes(root);
+  reportProgress(true);
 
   const viewportH = typeof window !== 'undefined' && window.innerHeight ? window.innerHeight : 1200;
   const step = Math.max(FAST_SCROLL_MIN_STEP_PX, Math.round(viewportH * FAST_SCROLL_STEP_VIEWPORT_RATIO));
@@ -297,12 +328,18 @@ export async function fastScrollPreload(
     });
   }
 
+  let cancelledAny = false;
   for (const target of targets) {
     let currentY = 0;
     let cycles = 0;
     let stalled = 0;
+    let targetCancelled = false;
     try {
       while (cycles < FAST_SCROLL_MAX_CYCLES && Date.now() - startedAt < FAST_SCROLL_MAX_DURATION_MS) {
+        if (isCancelled()) {
+          targetCancelled = true;
+          break;
+        }
         const beforeMax = target.getMax();
         if (beforeMax <= 0) break;
         if (currentY < beforeMax) currentY = Math.min(currentY + step, beforeMax);
@@ -314,23 +351,34 @@ export async function fastScrollPreload(
 
         const grew = target.getMax() > beforeMax;
         const added = harvest(target.offset());
+        reportProgress();
         stalled = added === 0 && !grew && currentY >= beforeMax ? stalled + 1 : 0;
         if (stalled >= FAST_SCROLL_STALL_CYCLES) break;
       }
 
-      if (typeof window !== 'undefined') {
-        window.dispatchEvent(new Event('resize'));
-        window.dispatchEvent(new Event('scroll'));
+      if (!targetCancelled) {
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new Event('resize'));
+          window.dispatchEvent(new Event('scroll'));
+        }
+        await sleep(FAST_SCROLL_STEP_SETTLE_MS);
+        harvest(target.offset());
       }
-      await sleep(FAST_SCROLL_STEP_SETTLE_MS);
-      harvest(target.offset());
     } finally {
+      // A cancelled sweep still restores the reader where the user left it.
       target.set(target.init);
+    }
+    if (targetCancelled) {
+      cancelledAny = true;
+      break;
     }
   }
 
-  await sleep(FAST_SCROLL_FINAL_SETTLE_MS);
-  harvest();
+  if (!cancelledAny) {
+    await sleep(FAST_SCROLL_FINAL_SETTLE_MS);
+    harvest();
+  }
+  reportProgress(true);
 
   return finalizeScannedImages(Array.from(discovered.values()));
 }

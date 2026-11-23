@@ -240,7 +240,11 @@ export function getActiveCustomSelector(): string | undefined {
   return findMatchingSiteRule(window.location.hostname, cachedSiteRules)?.selector;
 }
 
-// Top-frame v1: popup explicitly targets frameId 0, so embedded readers cannot create multiple archives.
+/** Set by FAST_SCAN_CANCEL; a running Fast Scan sweep checks it between steps. */
+let fastScanCancelled = false;
+
+// Scans may target a sub-frame (embedded readers); ZIP export and the chapter reader stay top-frame only,
+// so an embedded reader can never create a second archive.
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.target !== 'content' || message?.source !== 'popup' || message?.request !== true) return;
   if (message.type === 'GET_CHAPTER_ZIP_STATUS') {
@@ -275,6 +279,11 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     sendResponse({ status: 'success', pages });
     return;
   }
+  if (message.type === 'FAST_SCAN_CANCEL') {
+    fastScanCancelled = true;
+    sendResponse({ status: 'success' });
+    return;
+  }
   if (message.type === 'FAST_SCROLL_PRELOAD') {
     const isTranslatedCheck = (url: string) => {
       const reg = translatedRegistry.get(url);
@@ -283,9 +292,19 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         translatedUrl: reg?.translatedUrl,
       };
     };
-    void fastScrollPreload(document, getActiveCustomSelector(), isTranslatedCheck)
+    fastScanCancelled = false;
+    void fastScrollPreload(document, getActiveCustomSelector(), isTranslatedCheck, {
+      isCancelled: () => fastScanCancelled,
+      onProgress: (discovered) => {
+        void chrome.runtime
+          .sendMessage({ type: 'FAST_SCAN_PROGRESS', target: 'popup', source: 'content', discovered })
+          .catch(() => {
+            // The popup may already be closed; progress is best-effort.
+          });
+      },
+    })
       .then((pages) => {
-        sendResponse({ status: 'success', pages });
+        sendResponse({ status: 'success', pages, cancelled: fastScanCancelled });
       })
       .catch((err) => {
         console.warn('[Scanner] Fast scroll preload failed:', err);

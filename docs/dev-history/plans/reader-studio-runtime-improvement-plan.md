@@ -277,7 +277,7 @@ Rename or explain Fast Scan as an action that scrolls the page to discover lazy-
 
 For this redesign, accumulate eligible discoveries during the scan, deduplicate them, retain their order/source scope, restore the previous scroll position, and report the discovered count. Make cancellation and zero-results feedback clear. Do not claim to identify semantic chapter boundaries or guarantee a complete chapter when the site never exposes all images.
 
-**Status (devlog 121):** accumulation, deduplication, order retention and scroll restore are implemented in `src/content/scanner.ts` — `fastScrollPreload()` harvests after every step into a keyed map and finalizes once, and the Fast Scan tooltip now states the action. Measured on a scripted virtualized-reader fixture: 2 pages before, 8 after. Still open here: readers hosted in an iframe (`frameId: 0` in both popup scan requests), explicit cancellation, and zero-results copy.
+**Status (devlog 121):** accumulation, deduplication, order retention and scroll restore are implemented in `src/content/scanner.ts` — `fastScrollPreload()` harvests after every step into a keyed map and finalizes once, and the Fast Scan tooltip now states the action. Measured on a scripted virtualized-reader fixture: 2 pages before, 8 after. **Status (devlog 122):** the scan now probes sub-frames (bounded ids 0–9, no new permission) and sweeps the frame holding the reader, running sweeps report a live discovery count, and a Stop action cancels cooperatively while keeping what was found. Still open here: merging pages that are spread across several frames (rects are not comparable across frames), and zero-results copy.
 
 ## 6. Collection and asset implementation boundaries
 

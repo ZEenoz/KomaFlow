@@ -36,6 +36,53 @@ interface QueueJobStatus {
   status: 'queued' | 'downloading' | 'processing' | 'completed' | 'error';
 }
 
+/** Highest sub-frame id probed when the reader may be embedded in an iframe (Chrome numbers sub-frames from 1). */
+const MAX_PROBED_FRAME_ID = 9;
+
+interface FrameScanResult {
+  frameId: number;
+  pages: ScannedPageImage[];
+  connectionError?: string;
+}
+
+/**
+ * Asks one frame for its chapter pages, treating "no content script in this frame" as an empty result.
+ *
+ * @param tabId - Target tab id.
+ * @param frameId - Frame to ask.
+ * @returns Pages that frame reported.
+ */
+async function scanFrame(tabId: number, frameId: number): Promise<FrameScanResult> {
+  try {
+    const response = await chrome.tabs.sendMessage(
+      tabId,
+      { type: 'SCAN_CHAPTER_PAGES', target: 'content', source: 'popup', request: true },
+      { frameId }
+    );
+    const pages = response?.status === 'success' && Array.isArray(response.pages) ? response.pages : [];
+    return { frameId, pages };
+  } catch (error) {
+    return { frameId, pages: [], connectionError: (error as Error)?.message };
+  }
+}
+
+/**
+ * Scans the top frame and the sub-frames that may host an embedded reader, then keeps the
+ * frame with the most pages. Frames cannot be enumerated without a permission that adds a
+ * browsing-history warning, so a bounded id range is probed instead; every miss is a cheap
+ * rejected message.
+ *
+ * @param tabId - Target tab id.
+ * @returns Best frame id, its pages, and the top frame's connection error when it had none.
+ */
+async function scanBestFrame(tabId: number): Promise<FrameScanResult> {
+  const results = await Promise.all(
+    Array.from({ length: MAX_PROBED_FRAME_ID + 1 }, (_unused, frameId) => scanFrame(tabId, frameId))
+  );
+  const best = results.reduce((winner, current) => (current.pages.length > winner.pages.length ? current : winner));
+  return { frameId: best.frameId, pages: best.pages, connectionError: results[0].connectionError };
+}
+
 /**
  * XianScan-inspired Batch Chapter Page Scanner, History Gallery, and Queue Manager.
  * Discovers comic strip images on the active reading tab or loads from saved history,
@@ -59,6 +106,8 @@ export default function BatchScanPanel() {
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const createdUrlsRef = useRef<string[]>([]);
   const mountedRef = useRef(true);
+  /** Frame the last scan picked; Fast Scan and its cancel request must talk to the same frame. */
+  const scanFrameIdRef = useRef(0);
 
   // Resolves the active tab ID
   const getActiveTab = useCallback(async (): Promise<chrome.tabs.Tab | null> => {
@@ -69,6 +118,16 @@ export default function BatchScanPanel() {
     } catch {
       return null;
     }
+  }, []);
+
+  // Mirrors the discovery count a running Fast Scan sweep reports from the content script.
+  useEffect(() => {
+    const listener = (message: { type?: string; target?: string; discovered?: number }): void => {
+      if (message?.type !== 'FAST_SCAN_PROGRESS' || message?.target !== 'popup' || !mountedRef.current) return;
+      setStatusMessage(`Scanning… found ${message.discovered ?? 0} pages.`);
+    };
+    chrome.runtime.onMessage?.addListener(listener);
+    return () => chrome.runtime.onMessage?.removeListener(listener);
   }, []);
 
   // Polls background queue for job statuses
@@ -165,19 +224,12 @@ export default function BatchScanPanel() {
         return;
       }
 
-      const response = await chrome.tabs.sendMessage(
-        tab.id,
-        {
-          type: 'SCAN_CHAPTER_PAGES',
-          target: 'content',
-          source: 'popup',
-          request: true,
-        },
-        { frameId: 0 }
-      );
+      const best = await scanBestFrame(tab.id);
+      scanFrameIdRef.current = best.frameId;
+      if (best.connectionError) setNeedsTabReload(true);
 
-      if (mountedRef.current && response?.status === 'success' && Array.isArray(response.pages)) {
-        const scanned: ScannedPageImage[] = response.pages;
+      if (mountedRef.current && Array.isArray(best.pages)) {
+        const scanned: ScannedPageImage[] = best.pages;
         const items: UnifiedGalleryItem[] = scanned.map((page) => ({
           id: `page:${page.url}`,
           source: 'page',
@@ -219,7 +271,7 @@ export default function BatchScanPanel() {
     }
   }, [getActiveTab]);
 
-  // Triggers XianScan fast-scroll preload to un-lazy and mount all panels
+  // Triggers the content-side sweep that un-lazies and mounts every panel the reader will give it
   const handleFastScan = async () => {
     if (isFastScanning) return;
     setIsFastScanning(true);
@@ -227,6 +279,10 @@ export default function BatchScanPanel() {
     try {
       const tab = await getActiveTab();
       if (!tab?.id) return;
+
+      // Pick the frame that actually holds the reader before sweeping, so embedded readers are covered.
+      const snapshot = await scanBestFrame(tab.id);
+      scanFrameIdRef.current = snapshot.frameId;
 
       const response = await chrome.tabs.sendMessage(
         tab.id,
@@ -236,11 +292,14 @@ export default function BatchScanPanel() {
           source: 'popup',
           request: true,
         },
-        { frameId: 0 }
+        { frameId: snapshot.frameId }
       );
 
-      if (mountedRef.current && response?.status === 'success' && Array.isArray(response.pages)) {
-        const scanned: ScannedPageImage[] = response.pages;
+      const pages: ScannedPageImage[] =
+        response?.status === 'success' && Array.isArray(response.pages) ? response.pages : snapshot.pages;
+
+      if (mountedRef.current && pages.length > 0) {
+        const scanned = pages;
         const items: UnifiedGalleryItem[] = scanned.map((page) => ({
           id: `page:${page.url}`,
           source: 'page',
@@ -262,13 +321,34 @@ export default function BatchScanPanel() {
           }
           return next;
         });
-        setStatusMessage(`Discovered ${items.length} panels total.`);
+        setStatusMessage(
+          response?.cancelled
+            ? `Scan stopped: kept ${items.length} pages.`
+            : `Discovered ${items.length} panels total.`
+        );
       }
     } catch (err: any) {
       console.warn('[BatchScan] Fast-scroll preload failed:', err);
+      if (String(err?.message ?? err).includes('Could not establish connection')) setNeedsTabReload(true);
       setStatusMessage('Fast-scan encountered an error.');
     } finally {
       if (mountedRef.current) setIsFastScanning(false);
+    }
+  };
+
+  // Asks the sweeping frame to stop; the content script keeps whatever it already discovered
+  const handleCancelFastScan = async () => {
+    const tab = await getActiveTab();
+    if (!tab?.id) return;
+    setStatusMessage('Stopping scan…');
+    try {
+      await chrome.tabs.sendMessage(
+        tab.id,
+        { type: 'FAST_SCAN_CANCEL', target: 'content', source: 'popup', request: true },
+        { frameId: scanFrameIdRef.current }
+      );
+    } catch {
+      // The sweep already finished; the in-flight result still lands.
     }
   };
 
@@ -551,17 +631,21 @@ export default function BatchScanPanel() {
               </button>
 
               <button
-                onClick={handleFastScan}
-                disabled={isFastScanning || isScanning}
+                onClick={isFastScanning ? handleCancelFastScan : handleFastScan}
+                disabled={isScanning}
                 className="px-2 py-1 rounded bg-[var(--color-paper)] hover:bg-[var(--color-accent-fill)] hover:text-white border border-[var(--color-dust)] border-opacity-30 font-semibold transition-all flex items-center gap-1 text-[11px] cursor-pointer shadow-sm disabled:opacity-50"
-                title="Scroll the reader and collect every page it mounts (lazy, virtualized or paged)"
+                title={
+                  isFastScanning
+                    ? 'Stop the sweep and keep the pages found so far'
+                    : 'Scroll the reader and collect every page it mounts (lazy, virtualized or paged)'
+                }
               >
                 {isFastScanning ? (
-                  <Loader size={12} className="animate-spin" />
+                  <Square size={12} className="fill-current" />
                 ) : (
                   <Zap size={12} className="text-amber-500" />
                 )}
-                <span>{isFastScanning ? 'Scanning…' : 'Fast Scan'}</span>
+                <span>{isFastScanning ? 'Stop' : 'Fast Scan'}</span>
               </button>
             </>
           ) : (

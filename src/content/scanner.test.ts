@@ -10,6 +10,63 @@ import {
   type ScannedPageImage,
 } from './scanner';
 
+const VIRTUALIZED_PAGE_HEIGHT = 1000;
+
+interface VirtualizedReaderFixture {
+  reader: HTMLDivElement;
+  urls: string[];
+  currentScrollTop: () => number;
+}
+
+/**
+ * Builds a virtualized reader: only the pages inside the current scroll window exist in the DOM,
+ * which is what react-window/virtuoso-style readers do and what Fast Scan must survive.
+ *
+ * @param pageCount - Pages in the chapter.
+ * @param windowSize - Pages mounted at the same time.
+ * @returns Fixture with the reader element, expected page URLs, and its live scroll offset.
+ */
+function createVirtualizedReader(pageCount: number, windowSize: number): VirtualizedReaderFixture {
+  const urls = Array.from({ length: pageCount }, (_unused, index) => `https://example.com/ch/page-${index + 1}.jpg`);
+  const reader = document.createElement('div');
+  reader.className = 'chapter-reader';
+  reader.style.overflowY = 'auto';
+  document.body.appendChild(reader);
+
+  Object.defineProperty(reader, 'clientHeight', { configurable: true, value: VIRTUALIZED_PAGE_HEIGHT });
+  Object.defineProperty(reader, 'scrollHeight', {
+    configurable: true,
+    get: () => pageCount * VIRTUALIZED_PAGE_HEIGHT,
+  });
+
+  let scrollTop = 0;
+  const mountWindow = () => {
+    reader.innerHTML = '';
+    const firstMounted = Math.floor(scrollTop / VIRTUALIZED_PAGE_HEIGHT);
+    for (let index = firstMounted; index < Math.min(pageCount, firstMounted + windowSize); index += 1) {
+      const img = document.createElement('img');
+      img.src = urls[index];
+      const top = index * VIRTUALIZED_PAGE_HEIGHT - scrollTop;
+      vi.spyOn(img, 'getBoundingClientRect').mockReturnValue({
+        x: 0, y: top, top, left: 0, right: 800, bottom: top + VIRTUALIZED_PAGE_HEIGHT,
+        width: 800, height: VIRTUALIZED_PAGE_HEIGHT, toJSON: () => ({}),
+      } as DOMRect);
+      reader.appendChild(img);
+    }
+  };
+  Object.defineProperty(reader, 'scrollTop', {
+    configurable: true,
+    get: () => scrollTop,
+    set: (value: number) => {
+      scrollTop = value;
+      mountWindow();
+    },
+  });
+  mountWindow();
+
+  return { reader, urls, currentScrollTop: () => scrollTop };
+}
+
 describe('scanner unit tests', () => {
   beforeEach(() => {
     document.body.innerHTML = '';
@@ -144,58 +201,37 @@ describe('scanner unit tests', () => {
   });
 
   it('fast scan keeps pages a virtualized reader unmounts once scroll is restored', async () => {
-    const PAGE_HEIGHT = 1000;
-    const PAGE_COUNT = 8;
-    const WINDOW_SIZE = 2;
-
-    const reader = document.createElement('div');
-    reader.className = 'chapter-reader';
-    reader.style.overflowY = 'auto';
-    document.body.appendChild(reader);
-
-    Object.defineProperty(reader, 'clientHeight', { configurable: true, value: PAGE_HEIGHT });
-    Object.defineProperty(reader, 'scrollHeight', {
-      configurable: true,
-      get: () => PAGE_COUNT * PAGE_HEIGHT,
-    });
-
-    let scrollTop = 0;
-    const mountWindow = () => {
-      reader.innerHTML = '';
-      const firstMounted = Math.floor(scrollTop / PAGE_HEIGHT);
-      for (let index = firstMounted; index < Math.min(PAGE_COUNT, firstMounted + WINDOW_SIZE); index += 1) {
-        const img = document.createElement('img');
-        img.src = `https://example.com/ch/page-${index + 1}.jpg`;
-        const top = index * PAGE_HEIGHT - scrollTop;
-        vi.spyOn(img, 'getBoundingClientRect').mockReturnValue({
-          x: 0, y: top, top, left: 0, right: 800, bottom: top + PAGE_HEIGHT,
-          width: 800, height: PAGE_HEIGHT, toJSON: () => ({}),
-        } as DOMRect);
-        reader.appendChild(img);
-      }
-    };
-    Object.defineProperty(reader, 'scrollTop', {
-      configurable: true,
-      get: () => scrollTop,
-      set: (value: number) => {
-        scrollTop = value;
-        mountWindow();
-      },
-    });
-    mountWindow();
-
+    const fixture = createVirtualizedReader(8, 2);
     const scrollToSpy = vi.spyOn(window, 'scrollTo').mockImplementation(() => {});
 
     const pages = await fastScrollPreload(document);
 
     // Pages 3-8 exist only while the sweep is inside them; a scan after scroll restore sees just 1-2.
-    expect(pages.map((page) => page.url)).toEqual(
-      Array.from({ length: PAGE_COUNT }, (_, index) => `https://example.com/ch/page-${index + 1}.jpg`)
-    );
+    expect(pages.map((page) => page.url)).toEqual(fixture.urls);
     expect(pages.map((page) => page.top)).toEqual(
-      Array.from({ length: PAGE_COUNT }, (_, index) => index * PAGE_HEIGHT)
+      fixture.urls.map((_url, index) => index * VIRTUALIZED_PAGE_HEIGHT)
     );
-    expect(reader.scrollTop).toBe(0);
+    expect(fixture.currentScrollTop()).toBe(0);
+    scrollToSpy.mockRestore();
+  });
+
+  it('fast scan stops on cancel, keeps what it found, and reports progress', async () => {
+    const fixture = createVirtualizedReader(12, 2);
+    const scrollToSpy = vi.spyOn(window, 'scrollTo').mockImplementation(() => {});
+    const progress: number[] = [];
+    let cancelChecks = 0;
+
+    const pages = await fastScrollPreload(document, undefined, undefined, {
+      isCancelled: () => cancelChecks++ >= 3,
+      onProgress: (discovered) => progress.push(discovered),
+    });
+
+    expect(pages.length).toBeGreaterThan(2);
+    expect(pages.length).toBeLessThan(fixture.urls.length);
+    expect(progress.length).toBeGreaterThan(0);
+    expect(progress[progress.length - 1]).toBe(pages.length);
+    // The reader is still returned to where the user was reading.
+    expect(fixture.currentScrollTop()).toBe(0);
     scrollToSpy.mockRestore();
   });
 });

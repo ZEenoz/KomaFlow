@@ -139,6 +139,71 @@ describe('BatchScanPanel UI & Controls', () => {
     container.remove();
   });
 
+  // Declared before the chapter-reader test: that test leaves the jsdom environment unusable for later tests.
+  it('stops a running fast scan through the frame it started on', async () => {
+    const sendMessageMock = vi.fn().mockImplementation((tabIdOrMsg: any, maybeMsg?: any) => {
+      const msg = maybeMsg || tabIdOrMsg;
+      if (msg.type === 'SCAN_CHAPTER_PAGES') {
+        return Promise.resolve({
+          status: 'success',
+          pages: [
+            { id: '1', url: 'https://example.com/lazy1.jpg', width: 800, height: 1200, top: 0, left: 0, isTranslated: false },
+          ],
+        });
+      }
+      if (msg.type === 'FAST_SCROLL_PRELOAD') {
+        return new Promise(() => {}); // never settles until cancelled
+      }
+      return Promise.resolve({ status: 'success', jobs: [] });
+    });
+
+    (globalThis as any).chrome = {
+      tabs: {
+        query: vi.fn().mockResolvedValue([{ id: 101, url: 'https://mangadex.org/chapter/1' }]),
+        sendMessage: sendMessageMock,
+      },
+      runtime: {
+        sendMessage: sendMessageMock,
+        onMessage: { addListener: vi.fn(), removeListener: vi.fn() },
+      },
+    };
+
+    const root = createRoot(container);
+    await act(async () => {
+      root.render(<BatchScanPanel />);
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const findButton = (label: string) =>
+      Array.from(container.querySelectorAll('button')).find((btn) => btn.textContent?.trim() === label);
+
+    await act(async () => {
+      findButton('Fast Scan')?.click();
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const stopButton = findButton('Stop');
+    expect(stopButton).toBeDefined();
+    await act(async () => {
+      stopButton?.click();
+    });
+
+    expect(sendMessageMock).toHaveBeenCalledWith(
+      101,
+      expect.objectContaining({ type: 'FAST_SCAN_CANCEL' }),
+      { frameId: 0 }
+    );
+
+    await act(async () => {
+      root.unmount();
+    });
+    container.remove();
+  });
+
   it('smartly skips already-translated pages and dispatches custom pages to chapter reader', async () => {
     const mockPages = [
       { id: '1', url: 'https://example.com/1.jpg', width: 800, height: 1200, top: 0, left: 0, isTranslated: false },
