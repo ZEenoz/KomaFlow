@@ -123,6 +123,12 @@ once bubbles shorter than 4 Latin letters are excluded.
   and a page whose element was already removed loses its record first. A single result larger than
   the whole budget is retained anyway with a warning. Measured on `omegascans.org` chapter-6 (12
   pages, 128.2 MiB at page 12).
+- **A reloaded chapter is restored from storage, not re-translated, only while the stored page
+  survives.** After a reload the page has no in-page translation state, so `Translate Page` asks the
+  background for each URL and the background hands back the stored baked page for the same URL and
+  target language (`findStoredTranslation`). Pages whose job was pruned by retention (default seven
+  days), whose images were deleted, or that were baked for a different target language are paid for
+  again. Restoring is per image URL: a chapter that renders the same pages under new URLs re-translates.
 
 ## Verification caveats
 

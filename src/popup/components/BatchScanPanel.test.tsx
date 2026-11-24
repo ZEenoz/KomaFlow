@@ -83,7 +83,7 @@ describe('BatchScanPanel UI & Controls', () => {
     container.remove();
   });
 
-  it('renders Done for pages whose background job already completed', async () => {
+  it('does not claim Done for a page whose only completed job came from an earlier visit', async () => {
     const mockPages = [
       { id: '1', url: 'https://example.com/1.jpg', width: 800, height: 1200, top: 0, left: 0, isTranslated: false },
       { id: '2', url: 'https://example.com/2.jpg', width: 800, height: 1200, top: 1200, left: 0, isTranslated: false },
@@ -121,9 +121,76 @@ describe('BatchScanPanel UI & Controls', () => {
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
 
-    // A finished job must read as Done and must not be offered for translation again.
+    // The page reloaded, so the stored job row no longer describes what the artwork shows. Claiming
+    // Done here is what left the user with an English page and a disabled Translate button.
+    expect(container.textContent).not.toContain('Done');
+    expect(container.textContent).toContain('Translate 2 Selected Pages');
+
+    await act(async () => {
+      root.unmount();
+    });
+    container.remove();
+  });
+
+  it('shows Done for pages the background restored from storage', async () => {
+    const mockPages = [
+      { id: '1', url: 'https://example.com/1.jpg', width: 800, height: 1200, top: 0, left: 0, isTranslated: false },
+      { id: '2', url: 'https://example.com/2.jpg', width: 800, height: 1200, top: 1200, left: 0, isTranslated: false },
+    ];
+
+    const sendMessageMock = vi.fn().mockImplementation((tabIdOrMsg: any, maybeMsg?: any) => {
+      const msg = maybeMsg || tabIdOrMsg;
+      if (msg.type === 'SCAN_CHAPTER_PAGES') {
+        return Promise.resolve({ status: 'success', pages: mockPages });
+      }
+      if (msg.type === 'GET_QUEUE_STATUS') {
+        return Promise.resolve({ status: 'success', jobs: [] });
+      }
+      if (msg.type === 'BATCH_QUEUE_TRANSLATIONS') {
+        // The background hands page 1 back from storage and pays only for page 2.
+        return Promise.resolve({
+          status: 'success',
+          queuedCount: 1,
+          rejectedUrls: [],
+          restoredUrls: ['https://example.com/1.jpg'],
+          capacity: 100,
+        });
+      }
+      return Promise.resolve({ status: 'success' });
+    });
+
+    (globalThis as any).chrome = {
+      tabs: {
+        query: vi.fn().mockResolvedValue([{ id: 101, url: 'https://mangadex.org/chapter/1' }]),
+        sendMessage: sendMessageMock,
+      },
+      runtime: {
+        sendMessage: sendMessageMock,
+      },
+    };
+
+    const root = createRoot(container);
+    await act(async () => {
+      root.render(<BatchScanPanel />);
+    });
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    // Queue both pages, then assert the restored one is reported honestly.
+    const button = Array.from(container.querySelectorAll('button')).find((element) =>
+      element.textContent?.includes('Translate 2 Selected Pages')
+    ) as HTMLButtonElement;
+    await act(async () => {
+      button.click();
+    });
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    expect(container.textContent).toContain('Restored 1 already translated pages');
     expect(container.textContent).toContain('Done');
-    expect(container.textContent).toContain('Translated');
+    // The restored page must leave the pending count: a stale selection copy would still offer it.
     expect(container.textContent).toContain('Translate 1 Pages (1 already done)');
 
     await act(async () => {

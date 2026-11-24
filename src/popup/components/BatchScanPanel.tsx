@@ -107,6 +107,8 @@ export default function BatchScanPanel() {
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const createdUrlsRef = useRef<string[]>([]);
   const mountedRef = useRef(true);
+  /** Pages this panel submitted; only their completed job rows describe what this page load shows. */
+  const queuedHereRef = useRef(new Set<string>());
   /** Frame the last scan picked; Fast Scan and its cancel request must talk to the same frame. */
   const scanFrameIdRef = useRef(0);
 
@@ -149,13 +151,18 @@ export default function BatchScanPanel() {
   }, []);
 
   /**
-   * Treats a page as done when the content script reports translated bytes for it or when the
-   * background job for that URL already completed, so a finished job never falls back to "Ready".
+   * Treats a page as done when the content script reports translated bytes for it, or when a job
+   * this panel queued has completed. A completed job row left over from an earlier visit proves
+   * nothing: the page reloaded, so its translation is gone from the DOM and the card must offer
+   * Translate instead of claiming Done while the artwork is still in the source language.
+   *
    * @param item - Gallery item to classify.
    * @returns True when the page is translated and must not be queued again.
    */
   const isItemTranslated = useCallback(
-    (item: UnifiedGalleryItem): boolean => item.isTranslated || activeJobs.get(item.url) === 'completed',
+    (item: UnifiedGalleryItem): boolean =>
+      item.isTranslated ||
+      (queuedHereRef.current.has(item.url) && activeJobs.get(item.url) === 'completed'),
     [activeJobs]
   );
 
@@ -398,8 +405,16 @@ export default function BatchScanPanel() {
     });
   };
 
-  // Smart partition of selected items into pending (untranslated + error) vs already completed
-  const selectedList = Array.from(selectedMap.values());
+  // Smart partition of selected items into pending (untranslated + error) vs already completed.
+  // The selection map only stores ids, so resolve them against the live lists: item objects are
+  // replaced by later scans and by job/restore updates, and a stale copy would count a finished
+  // page as pending and offer to translate it again.
+  const liveItemsById = new Map<string, UnifiedGalleryItem>(
+    [...pageItems, ...historyItems].map((item) => [item.id, item])
+  );
+  const selectedList = Array.from(selectedMap.keys())
+    .map((id) => liveItemsById.get(id) ?? selectedMap.get(id))
+    .filter((item): item is UnifiedGalleryItem => Boolean(item));
   const pendingToTranslate = selectedList.filter(
     (item) => item.status === 'error' || !isItemTranslated(item)
   );
@@ -421,20 +436,38 @@ export default function BatchScanPanel() {
       });
 
       if (res?.status === 'success') {
+        // Pages the background restored from storage are already translated on the page: they get
+        // no job row, so they must show Done instead of spinning on a job that will never exist.
+        const restoredUrls = new Set<string>(res.restoredUrls ?? []);
         // Pages the background capacity guard refused get no job row, so they can never report
         // progress. Marking them "error" surfaces Retry and keeps them in the next batch instead
         // of leaving a spinner on a page that will never translate.
         const rejectedUrls = new Set<string>(res.rejectedUrls ?? []);
-        const admittedUrls = new Set(urlsToQueue.filter((url) => !rejectedUrls.has(url)));
-        const count = res.queuedCount ?? admittedUrls.size;
-        setStatusMessage(
-          rejectedUrls.size > 0
-            ? `Queued ${count} of ${urlsToQueue.length} pages — queue limit ${res.capacity ?? MAX_BATCH_QUEUE_CAPACITY} reached. Press Translate again as pages finish.`
-            : `Queued ${count} pages. Starting sequential translation.`
-        );
+        const count = res.queuedCount ?? urlsToQueue.length - rejectedUrls.size - restoredUrls.size;
+        if (rejectedUrls.size > 0) {
+          setStatusMessage(
+            `Queued ${count} of ${urlsToQueue.length} pages — queue limit ${res.capacity ?? MAX_BATCH_QUEUE_CAPACITY} reached. Press Translate again as pages finish.`
+          );
+        } else if (restoredUrls.size > 0) {
+          setStatusMessage(
+            count > 0
+              ? `Restored ${restoredUrls.size} already translated pages. Queued ${count} pages — starting sequential translation.`
+              : `Restored ${restoredUrls.size} already translated pages — nothing left to translate.`
+          );
+        } else {
+          setStatusMessage(`Queued ${count} pages. Starting sequential translation.`);
+        }
+
+        for (const url of urlsToQueue) {
+          if (rejectedUrls.has(url) || restoredUrls.has(url)) continue;
+          queuedHereRef.current.add(url);
+        }
 
         const nextStatus = (item: UnifiedGalleryItem) => {
           if (!urlsToQueue.includes(item.url)) return item;
+          if (restoredUrls.has(item.url)) {
+            return { ...item, isTranslated: true, status: 'completed' as UnifiedGalleryItem['status'] };
+          }
           return { ...item, status: (rejectedUrls.has(item.url) ? 'error' : 'queued') as UnifiedGalleryItem['status'] };
         };
         setPageItems((prev) => prev.map(nextStatus));

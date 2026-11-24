@@ -440,9 +440,18 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
           return;
         }
         console.log('[Background] Received TRANSLATE_IMAGE from content script. URL:', srcUrl);
-        queueTranslation(srcUrl, _sender.tab?.id)
-          .then(() => sendResponse({ status: 'queued' }))
-          .catch((err) => sendResponse({ status: 'error', error: err instanceof Error ? err.message : String(err) }));
+        (async () => {
+          // A page that already has a stored translation gets it back for free; only a page that
+          // was never translated (or was baked for another language) costs an inference run.
+          if (await deliverStoredTranslation(srcUrl, _sender.tab?.id, popupState?.targetLang)) {
+            sendResponse({ status: 'restored' });
+            return;
+          }
+          await queueTranslation(srcUrl, _sender.tab?.id);
+          sendResponse({ status: 'queued' });
+        })().catch((err) => {
+          sendResponse({ status: 'error', error: err instanceof Error ? err.message : String(err) });
+        });
       }).catch((err) => {
         sendResponse({ status: 'error', error: err instanceof Error ? err.message : String(err) });
       });
@@ -469,11 +478,18 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         }
 
         console.log(`[Background] Received BATCH_QUEUE_TRANSLATIONS for ${urls.length} images.`);
-        const { queuedCount, rejectedUrls, capacity } = await queueBatchTranslations(urls, targetTabId);
+        const { queuedCount, rejectedUrls, restoredUrls, capacity } = await queueBatchTranslations(
+          urls,
+          targetTabId,
+          popupState?.targetLang
+        );
+        if (restoredUrls.length > 0) {
+          console.log(`[Background] Batch restored ${restoredUrls.length}/${urls.length} pages from storage (no new translation).`);
+        }
         if (rejectedUrls.length > 0) {
           console.warn(`[Background] Batch queue refused ${rejectedUrls.length}/${urls.length} pages (capacity ${capacity}).`);
         }
-        sendResponse({ status: 'success', queuedCount, rejectedUrls, capacity, total: urls.length });
+        sendResponse({ status: 'success', queuedCount, rejectedUrls, restoredUrls, capacity, total: urls.length });
       }).catch((err) => {
         sendResponse({ status: 'error', error: err instanceof Error ? err.message : String(err) });
       });
@@ -1042,13 +1058,13 @@ function resolveInteractiveQueueCapacity(popupState: PopupState | undefined): nu
 }
 
 /**
- * Reads the popup's saved "Max Queue Capacity" slider and resolves the enforced value.
+ * Reads the popup's saved settings.
  *
- * @returns {Promise<number>} Queue capacity the interactive gate should enforce.
+ * @returns {Promise<PopupState | undefined>} Saved popup state, or undefined before the popup first ran.
  */
-async function readInteractiveQueueCapacity(): Promise<number> {
+async function readPopupState(): Promise<PopupState | undefined> {
   const stateData = await chrome.storage.local.get(STORAGE_KEYS.POPUP_STATE);
-  return resolveInteractiveQueueCapacity(stateData[STORAGE_KEYS.POPUP_STATE] as PopupState | undefined);
+  return stateData[STORAGE_KEYS.POPUP_STATE] as PopupState | undefined;
 }
 
 /**
@@ -1088,7 +1104,8 @@ export async function queueTranslation(
 
   // Queue capacity guard: MAX_BATCH_QUEUE_CAPACITY for the chapter panel, the popup's
   // "Max Queue Capacity" slider for single images.
-  const maxQueueCapacity = isBatch ? MAX_BATCH_QUEUE_CAPACITY : await readInteractiveQueueCapacity();
+  const popupState = await readPopupState();
+  const maxQueueCapacity = isBatch ? MAX_BATCH_QUEUE_CAPACITY : resolveInteractiveQueueCapacity(popupState);
   const queuedCount = await db.translationJobs.where('status').equals('queued').count();
   if (queuedCount >= maxQueueCapacity) {
     console.warn(`[Background] Translation queue is at maximum capacity (${queuedCount}/${maxQueueCapacity}). Rejecting request:`, srcUrl);
@@ -1106,7 +1123,10 @@ export async function queueTranslation(
     timestamp: Date.now(),
     status: 'queued',
     srcUrl: srcUrl,
-    tabId: tabId
+    tabId: tabId,
+    // Recorded so a reloaded page can be restored from its stored baked page instead of paying
+    // for the same translation twice in the wrong language.
+    targetLang: popupState?.targetLang,
   });
   
   // Kick off the queue processor
@@ -1124,18 +1144,28 @@ export async function queueTranslation(
  *
  * @param {string[]} urls - Image URLs to queue, in reading order.
  * @param {number} [tabId] - The tab that scanned the chapter, used for completion messages.
- * @returns {Promise<{ queuedCount: number; rejectedUrls: string[]; capacity: number }>} How many
- *   URLs are now in the queue (duplicates already waiting count as admitted), the URLs the
- *   capacity guard refused, and the batch capacity that was enforced.
+ * @param {string} [targetLang] - Language the popup is set to; stored pages baked for another
+ *   language are re-translated instead of restored.
+ * @returns {Promise<{ queuedCount: number; rejectedUrls: string[]; restoredUrls: string[]; capacity: number }>}
+ *   How many URLs are now in the queue (duplicates already waiting count as admitted), the URLs the
+ *   capacity guard refused, the URLs served from an already stored translation, and the batch
+ *   capacity that was enforced.
  */
 export async function queueBatchTranslations(
   urls: string[],
-  tabId?: number
-): Promise<{ queuedCount: number; rejectedUrls: string[]; capacity: number }> {
+  tabId?: number,
+  targetLang?: string
+): Promise<{ queuedCount: number; rejectedUrls: string[]; restoredUrls: string[]; capacity: number }> {
   let queuedCount = 0;
   const rejectedUrls: string[] = [];
+  const restoredUrls: string[] = [];
 
   for (const url of urls) {
+    // Already translated: hand the stored page back instead of paying for the same pixels again.
+    if (await deliverStoredTranslation(url, tabId, targetLang)) {
+      restoredUrls.push(url);
+      continue;
+    }
     let admission: QueueAdmission;
     try {
       admission = await queueTranslation(url, tabId, true);
@@ -1151,7 +1181,7 @@ export async function queueBatchTranslations(
     }
   }
 
-  return { queuedCount, rejectedUrls, capacity: MAX_BATCH_QUEUE_CAPACITY };
+  return { queuedCount, rejectedUrls, restoredUrls, capacity: MAX_BATCH_QUEUE_CAPACITY };
 }
 
 /**
@@ -1168,7 +1198,8 @@ async function queueCapturedTranslation(requestId: string, dataUrl: string, tabI
   const blob = await response.blob();
   const srcUrl = `kites-capture:${requestId}`;
 
-  const maxQueueCapacity = await readInteractiveQueueCapacity();
+  const popupState = await readPopupState();
+  const maxQueueCapacity = resolveInteractiveQueueCapacity(popupState);
   const queuedCount = await db.translationJobs.where('status').equals('queued').count();
   if (queuedCount >= maxQueueCapacity) {
     console.warn(`[Background] Translation queue is at maximum capacity (${queuedCount}/${maxQueueCapacity}). Rejecting capture request:`, srcUrl);
@@ -1187,6 +1218,7 @@ async function queueCapturedTranslation(requestId: string, dataUrl: string, tabI
     status: 'queued',
     srcUrl,
     tabId,
+    targetLang: popupState?.targetLang,
   })) as number;
 
   await db.images.add({
@@ -1401,6 +1433,54 @@ async function readBakedImageDataUrl(jobId: number): Promise<string | null> {
     console.warn(`[Background] Could not read the translated page for job ${jobId}:`, error);
     return null;
   }
+}
+
+/**
+ * Finds the newest completed job for an image whose baked page can be handed back to the page.
+ *
+ * A reloaded chapter loses every in-page record of its translation, so without this the only way
+ * back is paying for the same pages again. A page baked for a different target language is not
+ * reused: showing Thai lettering to someone who now wants Vietnamese is worse than re-translating.
+ * Jobs created before the language was recorded carry no `targetLang` and are reused as-is.
+ *
+ * @param srcUrl - Image URL the page asked about.
+ * @param targetLang - Language the popup is currently set to.
+ * @returns Job id of a reusable translation, or null when nothing reusable is stored.
+ */
+async function findStoredTranslation(srcUrl: string, targetLang?: string): Promise<number | null> {
+  const jobs = await db.translationJobs.where('srcUrl').equals(srcUrl).toArray();
+  const reusable = jobs
+    .filter((job) => job.status === 'completed' && typeof job.id === 'number')
+    .filter((job) => job.targetLang === undefined || job.targetLang === targetLang)
+    .sort((a, b) => (b.completedAt ?? b.timestamp) - (a.completedAt ?? a.timestamp));
+  for (const job of reusable) {
+    // Presence check only: `deliverRecoveredJob` does the expensive blob→data-URL conversion once.
+    const image = await db.images.where('jobId').equals(job.id as number).first();
+    if (image?.bakedImageBlob) return job.id as number;
+  }
+  return null;
+}
+
+/**
+ * Hands a stored translation back to the tab that asked for it, in the same message shape a fresh
+ * translation uses, so the content script applies it through one code path and pays nothing.
+ *
+ * @param srcUrl - Image URL to restore.
+ * @param tabId - Tab whose page should receive the stored translation.
+ * @param targetLang - Language the popup is currently set to.
+ * @returns True when a stored page was delivered and no new job is needed.
+ */
+async function deliverStoredTranslation(
+  srcUrl: string,
+  tabId: number | undefined,
+  targetLang?: string
+): Promise<boolean> {
+  if (!tabId) return false;
+  const jobId = await findStoredTranslation(srcUrl, targetLang);
+  if (jobId === null) return false;
+  await deliverRecoveredJob(tabId, jobId, srcUrl);
+  console.log(`[Background] Restored stored translation (job ${jobId}) for:`, srcUrl);
+  return true;
 }
 
 /** Reported when a job finished but the page it produced was not stored. */

@@ -678,3 +678,71 @@ describe('queue capacity limit', () => {
     await expectation;
   });
 });
+
+describe('stored translation reuse', () => {
+  const PAGE_URL = 'https://cdn.example.com/page-1.webp';
+
+  /**
+   * Stores a finished job with its baked page so the reuse path has something to hand back.
+   *
+   * @param targetLang - Language the stored page was baked for.
+   * @returns The stored job id.
+   */
+  async function storeFinishedPage(targetLang?: string): Promise<number> {
+    const jobId = (await db.translationJobs.add({
+      timestamp: Date.now(),
+      status: 'completed',
+      srcUrl: PAGE_URL,
+      completedAt: Date.now(),
+      targetLang,
+    })) as number;
+    await db.images.add({
+      jobId,
+      rawImageBlob: new NodeBlob(['raw']) as unknown as Blob,
+      bakedImageBlob: new NodeBlob(['baked'], { type: 'image/png' }) as unknown as Blob,
+    });
+    return jobId;
+  }
+
+  it('hands a stored page back instead of paying for it again', async () => {
+    await storeFinishedPage('th');
+
+    const result = await queueBatchTranslations([PAGE_URL], 1, 'th');
+
+    expect(result).toEqual({
+      queuedCount: 0,
+      rejectedUrls: [],
+      restoredUrls: [PAGE_URL],
+      capacity: MAX_BATCH_QUEUE_CAPACITY,
+    });
+    const sendMessage = vi.mocked((globalThis as any).chrome.tabs.sendMessage);
+    expect(sendMessage).toHaveBeenCalledWith(1, expect.objectContaining({
+      type: 'IMAGE_TRANSLATED',
+      payload: expect.objectContaining({ originalUrl: PAGE_URL }),
+    }));
+  });
+
+  it('re-translates a stored page that was baked for another language', async () => {
+    await storeFinishedPage('en');
+
+    const result = await queueBatchTranslations([PAGE_URL], 1, 'th');
+
+    expect(result.queuedCount).toBe(1);
+    expect(result.restoredUrls).toEqual([]);
+  });
+
+  it('re-translates when no baked page survived retention', async () => {
+    const jobId = (await db.translationJobs.add({
+      timestamp: Date.now(),
+      status: 'completed',
+      srcUrl: PAGE_URL,
+      targetLang: 'th',
+    })) as number;
+    await db.images.add({ jobId, rawImageBlob: new NodeBlob(['raw']) as unknown as Blob });
+
+    const result = await queueBatchTranslations([PAGE_URL], 1, 'th');
+
+    expect(result.queuedCount).toBe(1);
+    expect(result.restoredUrls).toEqual([]);
+  });
+});
