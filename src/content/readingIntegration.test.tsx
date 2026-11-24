@@ -257,6 +257,23 @@ describe('real content reading shortcut wiring', () => {
     expect(control?.querySelector('button')?.disabled).toBe(true);
   });
 
+  it('does not re-queue a page that already shows translated bytes', async () => {
+    const target = image('https://example.com/batch.png');
+    // The batch queue replaces the image without touching this effect's bookkeeping, so the
+    // auto fence has to recognise the replacement on the DOM or it pays for a second pass.
+    target.sourceElement.setAttribute('data-kites-orig-src', target.srcUrl);
+    target.sourceElement.setAttribute('data-kites-applied-src', 'blob:translated');
+    target.sourceElement.setAttribute('data-kites-translated', 'true');
+    target.imgElement!.src = 'blob:translated';
+    media.targets = [target];
+    state.isAuto = true;
+    vi.stubGlobal('IntersectionObserver', VisibleIntersectionObserver);
+    await mount('hover');
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
+
+    expect(sendMessage).not.toHaveBeenCalledWith({ type: 'TRANSLATE_IMAGE', url: target.srcUrl }, expect.any(Function));
+  });
+
   it('keeps a pending spinner pinned to its image while the pointer hovers another', async () => {
     const first = image('https://example.com/first.png');
     const second = image('https://example.com/second.png');

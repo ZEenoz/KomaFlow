@@ -31,6 +31,7 @@ import {
   createStyleRevealedTarget,
   discoverAddedMediaTargets,
   discoverMediaTargets,
+  isTargetTranslated,
   normalizeMediaUrl,
   resolveHoverMediaTarget,
   resolveMediaTargetAtPoint,
@@ -2025,6 +2026,12 @@ function GlobalOverlay() {
     const queueVisibleImage = (target: MediaTarget) => {
       const { sourceElement, srcUrl } = target;
       if (translatedSources.has(sourceElement) || queuedUrls.has(srcUrl)) return;
+      // Pages finished by the batch queue, reader or context menu never entered this effect's
+      // bookkeeping; the DOM is the only fence that stops a second paid pass on scroll-back.
+      if (isTargetTranslated(target)) {
+        translatedSources.add(sourceElement);
+        return;
+      }
       registerMediaTarget(target);
       // Lock queue-time position before auto-translate fires; the reader may navigate before completion.
       rememberChapterRequest(srcUrl, target);

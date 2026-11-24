@@ -393,6 +393,21 @@ export function createMediaTarget(img: HTMLImageElement): MediaTarget | null {
 }
 
 /**
+ * Tests whether a media target already carries translated bytes in the DOM.
+ *
+ * The batch queue, reader and context menu replace images without passing through
+ * auto-translate's in-memory bookkeeping, so without this fence a finished chapter would be
+ * queued (and paid for) a second time as soon as the reader scrolls it back into view.
+ *
+ * @param target - Validated media target.
+ * @returns True when the target currently presents a translated image.
+ */
+export function isTargetTranslated(target: MediaTarget): boolean {
+  return target.sourceElement.getAttribute('data-kites-translated') === 'true'
+    || target.surfaceElement.getAttribute('data-kites-translated') === 'true';
+}
+
+/**
  * Converts a CSS background or SVG image into a validated media target.
  *
  * @param element - Candidate rendered element.
