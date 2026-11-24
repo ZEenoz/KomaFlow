@@ -80,6 +80,55 @@ describe('BatchScanPanel UI & Controls', () => {
     container.remove();
   });
 
+  it('renders Done for pages whose background job already completed', async () => {
+    const mockPages = [
+      { id: '1', url: 'https://example.com/1.jpg', width: 800, height: 1200, top: 0, left: 0, isTranslated: false },
+      { id: '2', url: 'https://example.com/2.jpg', width: 800, height: 1200, top: 1200, left: 0, isTranslated: false },
+    ];
+
+    const sendMessageMock = vi.fn().mockImplementation((tabIdOrMsg: any, maybeMsg?: any) => {
+      const msg = maybeMsg || tabIdOrMsg;
+      if (msg.type === 'SCAN_CHAPTER_PAGES') {
+        return Promise.resolve({ status: 'success', pages: mockPages });
+      }
+      if (msg.type === 'GET_QUEUE_STATUS') {
+        return Promise.resolve({
+          status: 'success',
+          jobs: [{ id: 7, srcUrl: 'https://example.com/1.jpg', status: 'completed' }],
+        });
+      }
+      return Promise.resolve({ status: 'success' });
+    });
+
+    (globalThis as any).chrome = {
+      tabs: {
+        query: vi.fn().mockResolvedValue([{ id: 101, url: 'https://mangadex.org/chapter/1' }]),
+        sendMessage: sendMessageMock,
+      },
+      runtime: {
+        sendMessage: sendMessageMock,
+      },
+    };
+
+    const root = createRoot(container);
+    await act(async () => {
+      root.render(<BatchScanPanel />);
+    });
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    // A finished job must read as Done and must not be offered for translation again.
+    expect(container.textContent).toContain('Done');
+    expect(container.textContent).toContain('Translated');
+    expect(container.textContent).toContain('Translate 1 Pages (1 already done)');
+
+    await act(async () => {
+      root.unmount();
+    });
+    container.remove();
+  });
+
   it('triggers FAST_SCROLL_PRELOAD when Fast Scan button is clicked', async () => {
     const sendMessageMock = vi.fn().mockImplementation((tabIdOrMsg: any, maybeMsg?: any) => {
       const msg = maybeMsg || tabIdOrMsg;

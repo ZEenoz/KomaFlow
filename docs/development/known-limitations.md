@@ -116,6 +116,13 @@ once bubbles shorter than 4 Latin letters are excluded.
 - **A lost offscreen response is recovered by re-reading the stored page**, which is why the baked
   page is persisted at all. Without that row the job reports `Translation finished but its page
   could not be recovered.` rather than leaving the tab spinning.
+- **The content-side session pool keeps at most 128 MiB of translated pages**, and it now pays for a
+  new page by evicting the oldest archived one (detached pages first). Tall chapters — 720×16000
+  strips at ~10.7 MiB each — therefore keep roughly eleven recorded pages: every page still receives
+  its artwork, but earlier pages drop out of the ZIP export and out of the reversion-shield replay,
+  and a page whose element was already removed loses its record first. A single result larger than
+  the whole budget is retained anyway with a warning. Measured on `omegascans.org` chapter-6 (12
+  pages, 128.2 MiB at page 12).
 
 ## Verification caveats
 

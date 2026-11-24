@@ -4,6 +4,7 @@ import JSZip from 'jszip';
 export const CHAPTER_ZIP_BYTE_LIMIT = 256 * 1024 * 1024;
 // Bounded retention budget for the content-side session asset pool (128 MiB default).
 export const SESSION_IMAGE_BYTE_LIMIT = 128 * 1024 * 1024;
+const BYTES_PER_MIB = 1024 * 1024;
 
 /**
  * Accurately estimates binary payload byte count from a data URL without decoding to string or Uint8Array.
@@ -118,6 +119,45 @@ export function createChapterTranslationRegistry(options: ChapterTranslationRegi
   }
 
   /**
+   * Reclaims session budget by evicting the oldest archived results, so a finished translation is
+   * never refused while the page is waiting for its bytes. Detached pages go first: their bytes can
+   * never be re-shown, and revoking them cannot disturb an image the reader can still see. The
+   * record being admitted is never a candidate.
+   * @param bytesNeeded - Encoded bytes the incoming result adds to the budget.
+   * @param protectedUrl - Source URL currently being archived.
+   * @returns Bytes reclaimed from the session budget.
+   */
+  function evictOldestRetained(bytesNeeded: number, protectedUrl: string): number {
+    if (currentSessionBytes + bytesNeeded <= maxSessionBytes) return 0;
+    const candidates: { sourcePage: string; record: ChapterTranslationRecord; detached: boolean; order: number }[] = [];
+    for (const [sourcePage, chapter] of chapters) {
+      for (const record of chapter.values()) {
+        candidates.push({ sourcePage, record, detached: !record.surfaceElement?.isConnected, order: candidates.length });
+      }
+    }
+    candidates.sort(
+      (a, b) => Number(b.detached) - Number(a.detached) || a.record.sequence - b.record.sequence || a.order - b.order
+    );
+
+    let freedBytes = 0;
+    for (const { sourcePage, record } of candidates) {
+      if (currentSessionBytes + bytesNeeded - freedBytes <= maxSessionBytes) break;
+      if (record.originalUrl === protectedUrl) continue;
+      const size = byteSizes.get(record.translatedUrl) || 0;
+      chapters.get(sourcePage)?.delete(record.originalUrl);
+      byteSizes.delete(record.translatedUrl);
+      if (record.jobId !== undefined) completedJobs.delete(record.jobId);
+      currentSessionBytes = Math.max(0, currentSessionBytes - size);
+      freedBytes += size;
+      // shortcut: Chrome keeps the decoded pixels of an already-applied image after its blob URL is
+      // revoked, but a reversion-shield replay of that URL cannot reload it. Evicting detached pages
+      // first confines that risk to chapters that genuinely exceed the whole session budget.
+      options.revokeTranslatedUrl(record.translatedUrl);
+    }
+    return freedBytes;
+  }
+
+  /**
    * Archives terminal bytes without requiring a live element; duplicate jobs reuse their blob.
    * Untracked events require a live target (e.g. native context-menu translation); they cannot
    * be assigned to an unrelated chapter merely because the tab navigated before completion.
@@ -144,16 +184,22 @@ export function createChapterTranslationRegistry(options: ChapterTranslationRegi
     if (!chapter) chapters.set(sourcePage, chapter = new Map());
     const previous = chapter.get(originalUrl);
 
-    // Enforce the bounded session encoded-result retention budget (128 MiB default)
+    // Enforce the bounded session budget by evicting older archives instead of refusing this result:
+    // a refused result leaves the page showing its original artwork while the background job reports
+    // success, which is worse than losing the oldest archived page from the exportable session.
     const dataSize = estimateDataUrlBytes(dataUrl);
     const previousSize = previous ? (byteSizes.get(previous.translatedUrl) || 0) : 0;
     const netChange = dataSize - previousSize;
+    const evictedBytes = evictOldestRetained(Math.max(0, netChange), originalUrl);
+    if (evictedBytes > 0) {
+      console.log(
+        `[ChapterTranslationRegistry] Evicted ${(evictedBytes / BYTES_PER_MIB).toFixed(1)} MiB of retained results to admit: ${originalUrl}`
+      );
+    }
     if (netChange > 0 && currentSessionBytes + netChange > maxSessionBytes) {
       console.warn(
-        `[ChapterTranslationRegistry] Result not retained: session image limit reached (${((currentSessionBytes + netChange) / (1024 * 1024)).toFixed(1)} MiB > ${(maxSessionBytes / (1024 * 1024)).toFixed(0)} MiB)`
+        `[ChapterTranslationRegistry] Single result exceeds the session image budget and is retained anyway (${((currentSessionBytes + netChange) / BYTES_PER_MIB).toFixed(1)} MiB > ${(maxSessionBytes / BYTES_PER_MIB).toFixed(0)} MiB)`
       );
-      forget(originalUrl);
-      return undefined;
     }
 
     const metadata = position ?? {

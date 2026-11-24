@@ -258,7 +258,7 @@ describe('chapterZip', () => {
       expect(estimateDataUrlBytes('blob:http://example.com/xyz')).toBe(0);
     });
 
-    it('enforces bounded session image retention budget and rejects overflowing admissions', () => {
+    it('evicts the oldest retained result instead of dropping a finished translation', () => {
       const sourcePage = 'https://example.com/read';
       const revokeTranslatedUrl = vi.fn();
       // Set a small 10-byte budget for testing
@@ -278,20 +278,55 @@ describe('chapterZip', () => {
       expect(rec1).toBeDefined();
       expect(registry.getCurrentSessionBytes()).toBe(6);
 
-      // Attempt to add another 6 bytes: 6 + 6 = 12 > 10, should reject!
+      // 6 + 6 = 12 > 10: the waiting page still gets its bytes, the oldest record pays for them.
       registry.remember('https://example.com/p2.png');
-      const rec2 = registry.complete('https://example.com/p2.png', 'data:image/png;base64,AAAAAAAA', 2);
-      expect(rec2).toBeUndefined();
-      expect(registry.isLimitReached()).toBe(false); // Current 6 <= 10
-      expect(registry.isLimitReached(6)).toBe(true);  // Candidate +6 > 10
-      expect(registry.getCurrentSessionBytes()).toBe(6);
-
-      // Replacing p1 with another 6 bytes should succeed (net change 0)
-      registry.remember('https://example.com/p1.png');
-      const rec1New = registry.complete('https://example.com/p1.png', 'data:image/png;base64,BBBBBBBB', 3);
-      expect(rec1New).toBeDefined();
+      const rec2 = registry.complete('https://example.com/p2.png', 'data:image/png;base64,BBBBBBBB', 2);
+      expect(rec2).toBeDefined();
+      expect(rec2?.translatedUrl).toBe('blob:data:image/png;base64,BBBBBBBB');
+      expect(registry.get('https://example.com/p2.png')?.translatedUrl).toBe('blob:data:image/png;base64,BBBBBBBB');
+      expect(registry.get('https://example.com/p1.png')).toBeUndefined();
+      expect(Array.from(registry.getRecords())).toHaveLength(1);
       expect(registry.getCurrentSessionBytes()).toBe(6);
       expect(revokeTranslatedUrl).toHaveBeenCalledWith('blob:data:image/png;base64,AAAAAAAA');
+      expect(registry.isLimitReached()).toBe(false); // Current 6 <= 10
+      expect(registry.isLimitReached(6)).toBe(true);  // Candidate +6 > 10
+
+      // A single result larger than the whole budget is retained too: the page must not stay original.
+      registry.remember('https://example.com/huge.png');
+      const recHuge = registry.complete('https://example.com/huge.png', `data:image/png;base64,${'A'.repeat(40)}`, 3);
+      expect(recHuge).toBeDefined();
+      expect(registry.getCurrentSessionBytes()).toBe(30);
+    });
+
+    it('evicts detached pages before connected ones when the budget is exceeded', () => {
+      const sourcePage = 'https://example.com/read';
+      const revokeTranslatedUrl = vi.fn();
+      const registry = createChapterTranslationRegistry({
+        getSourcePage: () => sourcePage,
+        createTranslatedUrl: (data) => `blob:${data}`,
+        revokeTranslatedUrl,
+        maxSessionBytes: 12,
+      });
+
+      const connected = document.createElement('img');
+      const detached = document.createElement('img');
+      document.body.append(connected, detached);
+
+      registry.remember('https://example.com/older.png', { surfaceElement: connected });
+      registry.complete('https://example.com/older.png', 'data:image/png;base64,AAAAAAAA', 1); // 6 bytes, connected
+      registry.remember('https://example.com/newer.png', { surfaceElement: detached });
+      registry.complete('https://example.com/newer.png', 'data:image/png;base64,BBBBBBBB', 2); // 6 bytes, detached next
+      detached.remove();
+
+      // 12 + 6 > 12: the detached page is evicted even though it is the newer record.
+      registry.remember('https://example.com/incoming.png');
+      expect(registry.complete('https://example.com/incoming.png', 'data:image/png;base64,CCCCCCCC', 3)).toBeDefined();
+      expect(registry.get('https://example.com/newer.png')).toBeUndefined();
+      expect(registry.get('https://example.com/older.png')).toBeDefined();
+      expect(registry.getCurrentSessionBytes()).toBe(12);
+      expect(revokeTranslatedUrl).toHaveBeenCalledWith('blob:data:image/png;base64,BBBBBBBB');
+
+      connected.remove();
     });
 
     it('clears earlier chapter records and reclaims memory when requested', () => {

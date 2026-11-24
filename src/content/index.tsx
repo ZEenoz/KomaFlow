@@ -1955,23 +1955,23 @@ function GlobalOverlay() {
       );
 
       if (!record) {
-        if (translatedRegistry.isLimitReached()) {
-          console.warn(`[Content Script] Result not retained: session image limit reached for: ${originalUrl}`);
-          setChapterPages((prev) => {
-            const next = prev.map((page) =>
-              page.url === originalUrl
-                ? {
-                    ...page,
-                    status: 'error' as const,
-                  }
-                : page
-            );
-            if (next.every((p) => p.isTranslated || p.status === 'error')) {
-              setIsTranslatingChapter(false);
-            }
-            return next;
-          });
-        }
+        // No queue context and no attached element: the bytes have nowhere to go. The result is not
+        // dropped for budget reasons — the registry evicts older archives instead.
+        console.warn(`[Content Script] Translation not applied: no queue context or attached media element for: ${originalUrl}`);
+        setChapterPages((prev) => {
+          const next = prev.map((page) =>
+            page.url === originalUrl
+              ? {
+                  ...page,
+                  status: 'error' as const,
+                }
+              : page
+          );
+          if (next.every((p) => p.isTranslated || p.status === 'error')) {
+            setIsTranslatingChapter(false);
+          }
+          return next;
+        });
         return;
       }
 

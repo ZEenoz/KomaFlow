@@ -147,6 +147,17 @@ export default function BatchScanPanel() {
     } catch {}
   }, []);
 
+  /**
+   * Treats a page as done when the content script reports translated bytes for it or when the
+   * background job for that URL already completed, so a finished job never falls back to "Ready".
+   * @param item - Gallery item to classify.
+   * @returns True when the page is translated and must not be queued again.
+   */
+  const isItemTranslated = useCallback(
+    (item: UnifiedGalleryItem): boolean => item.isTranslated || activeJobs.get(item.url) === 'completed',
+    [activeJobs]
+  );
+
   // Loads translation history records from Dexie
   const loadHistoryItems = useCallback(async () => {
     setIsLoadingHistory(true);
@@ -389,7 +400,7 @@ export default function BatchScanPanel() {
   // Smart partition of selected items into pending (untranslated + error) vs already completed
   const selectedList = Array.from(selectedMap.values());
   const pendingToTranslate = selectedList.filter(
-    (item) => !item.isTranslated || item.status === 'error'
+    (item) => item.status === 'error' || !isItemTranslated(item)
   );
   const skippedCount = selectedList.length - pendingToTranslate.length;
 
@@ -722,6 +733,7 @@ export default function BatchScanPanel() {
               const isSelected = selectedMap.has(item.id);
               const jobStatus = activeJobs.get(item.url) || item.status;
               const isBusy = jobStatus === 'queued' || jobStatus === 'processing' || jobStatus === 'downloading';
+              const isDone = isItemTranslated(item);
 
               return (
                 <div
@@ -773,7 +785,7 @@ export default function BatchScanPanel() {
 
                     {/* Status Overlay Badge */}
                     <div className="absolute bottom-1 right-1 bg-black/80 backdrop-blur text-white text-[9px] font-mono px-1 py-0.5 rounded flex items-center gap-1">
-                      {item.isTranslated ? (
+                      {isDone ? (
                         <>
                           <Check size={10} className="text-emerald-400" />
                           <span className="text-emerald-300 font-semibold">Done</span>
@@ -803,7 +815,7 @@ export default function BatchScanPanel() {
                         ? `${item.width}×${item.height}`
                         : '...'}
                     </span>
-                    {item.isTranslated ? (
+                    {isDone ? (
                       <span className="text-emerald-500 font-bold">Translated</span>
                     ) : item.status === 'error' ? (
                       <span className="text-rose-400 font-bold">Failed</span>
