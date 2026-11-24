@@ -6,6 +6,7 @@ This document preserves the original plan, phase record and historical diagrams 
 
 **Overlay update, 2026-11-15 (v1.4.1, `5f69526`).** 99 commits landed after `c5cf3a0`; the items below are additive, nothing above is retracted.
 - Queue semantics changed: the background worker runs exactly one image pipeline at a time (WebGPU/JSEP reject recursive kernel invocation), and the popup's `concurrency` value (1–5, labelled _Max Queue Capacity_) now bounds **queue capacity**, not parallelism. Batch scanning uses a fixed capacity of 100.
+- Queue admission is reported, not assumed: `queueTranslation` returns `'queued' | 'duplicate' | 'capacity'`, and `queueBatchTranslations` returns the pages the batch cap refused so the panel can mark them Retry instead of leaving them spinning.
 - Chapter export budgets are two separate constants: `CHAPTER_ZIP_BYTE_LIMIT = 256 MiB` for ZIP output and `SESSION_IMAGE_BYTE_LIMIT = 128 MiB` for the content-side session asset pool.
 - Model downloads use four versioned Cache API stores (`kites-ocr-models-v1`, `kites-inpaint-models-v1`, `kites-bubble-models-v1`, `kites-color-models-v1`); there is no single `kites-model-cache`.
 - Provider request parameters and the Gemini schema field are catalog-driven (ADR-013), and documentation is gated in CI (`npm run docs:check`, `npm run docs:api`).

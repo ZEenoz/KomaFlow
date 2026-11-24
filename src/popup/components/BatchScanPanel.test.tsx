@@ -13,6 +13,9 @@ describe('BatchScanPanel UI & Controls', () => {
   beforeEach(() => {
     container = document.createElement('div');
     document.body.appendChild(container);
+    // The panel closes the popup after launching the reader or the ZIP export; jsdom tears the whole
+    // document down on close, which left every later test in this file without a DOM.
+    vi.spyOn(window, 'close').mockImplementation(() => {});
   });
 
   it('renders scanned chapter pages, allows selection, and dispatches batch queue', async () => {
@@ -326,6 +329,64 @@ describe('BatchScanPanel UI & Controls', () => {
       }),
       { frameId: 0 }
     );
+
+    await act(async () => {
+      root.unmount();
+    });
+    container.remove();
+  });
+
+  it('marks the pages a full batch queue refused so they can be retried', async () => {
+    const mockPages = [
+      { id: '1', url: 'https://example.com/1.jpg', width: 800, height: 1200, top: 0, left: 0, isTranslated: false },
+      { id: '2', url: 'https://example.com/2.jpg', width: 800, height: 1200, top: 1200, left: 0, isTranslated: false },
+    ];
+
+    const sendMessageMock = vi.fn().mockImplementation((tabIdOrMsg: any, maybeMsg?: any) => {
+      const msg = maybeMsg || tabIdOrMsg;
+      if (msg.type === 'SCAN_CHAPTER_PAGES') {
+        return Promise.resolve({ status: 'success', pages: mockPages });
+      }
+      if (msg.type === 'GET_QUEUE_STATUS') {
+        return Promise.resolve({ status: 'success', jobs: [] });
+      }
+      if (msg.type === 'BATCH_QUEUE_TRANSLATIONS') {
+        return Promise.resolve({
+          status: 'success',
+          queuedCount: 1,
+          rejectedUrls: ['https://example.com/2.jpg'],
+          capacity: 100,
+        });
+      }
+      return Promise.resolve({ status: 'success' });
+    });
+
+    (globalThis as any).chrome = {
+      tabs: {
+        query: vi.fn().mockResolvedValue([{ id: 101, url: 'https://mangadex.org/chapter/1' }]),
+        sendMessage: sendMessageMock,
+      },
+      runtime: {
+        sendMessage: sendMessageMock,
+      },
+    };
+
+    const root = createRoot(container);
+    await act(async () => {
+      root.render(<BatchScanPanel />);
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const translateBtn = container.querySelector('button.bg-\\[var\\(--color-accent-fill\\)\\]') as HTMLButtonElement;
+    await act(async () => {
+      translateBtn.click();
+    });
+
+    expect(container.textContent).toContain('Queued 1 of 2 pages');
+    expect(container.textContent).toContain('limit 100');
+    expect(container.textContent).toContain('Retry');
 
     await act(async () => {
       root.unmount();

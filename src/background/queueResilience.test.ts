@@ -128,8 +128,10 @@ import {
   MAX_JOB_WAIT_MS,
   processQueue,
   queueTranslation,
+  queueBatchTranslations,
   enqueueStudioJob,
 } from './index';
+import { MAX_BATCH_QUEUE_CAPACITY } from '../shared/constants';
 import { db } from '../db';
 
 const STALE_WINDOW_MS = 2 * 60 * 1000;
@@ -572,6 +574,44 @@ describe('queue capacity limit', () => {
         error: expect.stringContaining('full'),
       },
     });
+  });
+
+  it('reports the pages a full batch queue refused instead of counting them as queued', async () => {
+    // A chapter longer than the batch cap: every extra page used to be reported as queued, so the
+    // panel kept a spinner on a page that had no job row and would never translate.
+    (globalThis as any).chrome.storage.local.get.mockResolvedValue({
+      popupState: { concurrency: 5 },
+    });
+    await db.translationJobs.bulkAdd(
+      Array.from({ length: MAX_BATCH_QUEUE_CAPACITY }, (_, index) => ({
+        timestamp: Date.now(),
+        status: 'queued',
+        srcUrl: `https://cdn.example.com/fill-${index}.webp`,
+        tabId: 1,
+      }))
+    );
+
+    const result = await queueBatchTranslations(['https://cdn.example.com/refused.webp'], 1);
+
+    expect(result.queuedCount).toBe(0);
+    expect(result.rejectedUrls).toEqual(['https://cdn.example.com/refused.webp']);
+    expect(result.capacity).toBe(MAX_BATCH_QUEUE_CAPACITY);
+  });
+
+  it('counts an already queued page as admitted rather than refused', async () => {
+    // Re-pressing Translate sends the same URLs again; a duplicate is in the queue already, so it
+    // must not be reported back as a refused page the user has to retry.
+    await db.translationJobs.add({
+      timestamp: Date.now(),
+      status: 'queued',
+      srcUrl: 'https://cdn.example.com/duplicate.webp',
+      tabId: 1,
+    });
+
+    const result = await queueBatchTranslations(['https://cdn.example.com/duplicate.webp'], 1);
+
+    expect(result.queuedCount).toBe(1);
+    expect(result.rejectedUrls).toEqual([]);
   });
 
   it('never re-queues a duplicate while the existing job is only queued, however long it has waited', async () => {

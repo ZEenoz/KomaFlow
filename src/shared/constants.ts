@@ -121,4 +121,16 @@ export const RENDER_FONT_MIN_SIZE_RANGE = {
   default: 6,
 } as const;
 
+/**
+ * How many pages a single "Translate Page" batch may keep waiting in the queue.
+ *
+ * Batch queueing is deliberately independent of the popup's "Max Queue Capacity" slider: that
+ * slider bounds the single-image queue (hover button, auto-translate, Crop & Translate), while a
+ * chapter batch is admitted up to this fixed cap so a 40-page chapter does not get refused page by
+ * page. The background gate, the batch panel's over-limit message and the settings hint all read
+ * this value, so raising the cap is a one-line change here.
+ */
+export const MAX_BATCH_QUEUE_CAPACITY = 100;
+
+
 

@@ -2,6 +2,7 @@ import { useState } from 'react';
 import type { PopupState, HistoryRetentionPeriod } from '../../shared/types';
 import { DEFAULT_POPUP_STATE } from '../../shared/types';
 import { DEFAULT_SFX_POLICY, SFX_POLICIES, type SfxPolicyId } from '../../shared/sfx/sfxPolicy';
+import { MAX_BATCH_QUEUE_CAPACITY } from '../../shared/constants';
 import { KeyRound, Network, BookOpen, Globe, MessageSquare, Pencil } from 'lucide-react';
 import GlossaryPanel from './GlossaryPanel';
 import CustomPromptPanel from './CustomPromptPanel';
@@ -254,7 +255,9 @@ export default function SettingsView({ state, updateState }: SettingsViewProps) 
               <div className="flex items-center gap-1.5">
                 <span className="font-medium text-sm">Max Queue Capacity</span>
                 <FieldHint>
-                  Maximum images allowed in translation queue. Processed sequentially for GPU stability.
+                  Maximum images waiting in the single-image queue (hover button, auto-translate,
+                  Crop &amp; Translate). Translate Page batches queue up to {MAX_BATCH_QUEUE_CAPACITY} pages.
+                  Processed sequentially for GPU stability.
                 </FieldHint>
               </div>
               <span className="text-sm font-bold text-[var(--color-editorial)]">{state.concurrency}</span>

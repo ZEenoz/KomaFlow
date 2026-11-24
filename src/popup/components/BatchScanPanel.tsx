@@ -16,6 +16,7 @@ import {
 import type { ScannedPageImage } from '../../content/scanner';
 import type { ChapterReaderPage } from '../../content/ChapterReaderModal';
 import { db, type ImageRecord } from '../../db';
+import { MAX_BATCH_QUEUE_CAPACITY } from '../../shared/constants';
 
 export interface UnifiedGalleryItem {
   id: string; // `page:${url}` or `history:${jobId}`
@@ -420,20 +421,24 @@ export default function BatchScanPanel() {
       });
 
       if (res?.status === 'success') {
-        const count = res.queuedCount ?? urlsToQueue.length;
-        setStatusMessage(`Queued ${count} pages. Starting sequential translation.`);
-        const queuedUrls = new Set(urlsToQueue);
+        // Pages the background capacity guard refused get no job row, so they can never report
+        // progress. Marking them "error" surfaces Retry and keeps them in the next batch instead
+        // of leaving a spinner on a page that will never translate.
+        const rejectedUrls = new Set<string>(res.rejectedUrls ?? []);
+        const admittedUrls = new Set(urlsToQueue.filter((url) => !rejectedUrls.has(url)));
+        const count = res.queuedCount ?? admittedUrls.size;
+        setStatusMessage(
+          rejectedUrls.size > 0
+            ? `Queued ${count} of ${urlsToQueue.length} pages — queue limit ${res.capacity ?? MAX_BATCH_QUEUE_CAPACITY} reached. Press Translate again as pages finish.`
+            : `Queued ${count} pages. Starting sequential translation.`
+        );
 
-        setPageItems((prev) =>
-          prev.map((item) =>
-            queuedUrls.has(item.url) ? { ...item, status: 'queued' as const } : item
-          )
-        );
-        setHistoryItems((prev) =>
-          prev.map((item) =>
-            queuedUrls.has(item.url) ? { ...item, status: 'queued' as const } : item
-          )
-        );
+        const nextStatus = (item: UnifiedGalleryItem) => {
+          if (!urlsToQueue.includes(item.url)) return item;
+          return { ...item, status: (rejectedUrls.has(item.url) ? 'error' : 'queued') as UnifiedGalleryItem['status'] };
+        };
+        setPageItems((prev) => prev.map(nextStatus));
+        setHistoryItems((prev) => prev.map(nextStatus));
       } else {
         setStatusMessage(res?.error || 'Failed to queue translations.');
       }

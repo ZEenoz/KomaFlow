@@ -3,7 +3,7 @@ import { respectsFinishedJob } from './finishedJobRecovery';
 import { buildJobWaitBudget } from './jobWaitBudget';
 import type { ProcessJobMessage, PopupState, PreloadActiveEngineMessage, BubbleDetectionMode, HistoryRetentionPeriod } from '../shared/types';
 import { DEFAULT_POPUP_STATE } from '../shared/types';
-import { CLOUDFLARE_QUOTA_DEFAULT_ENDPOINT, RENDER_FONT_MIN_SIZE_RANGE, STORAGE_KEYS } from '../shared/constants';
+import { CLOUDFLARE_QUOTA_DEFAULT_ENDPOINT, MAX_BATCH_QUEUE_CAPACITY, RENDER_FONT_MIN_SIZE_RANGE, STORAGE_KEYS } from '../shared/constants';
 import modelsRegistryData from '../shared/models-registry.json';
 import { normalizeCustomApiConfig } from '../shared/customApi';
 import { blobToDataUrl } from '../shared/utils/blobDataUrl';
@@ -469,16 +469,11 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         }
 
         console.log(`[Background] Received BATCH_QUEUE_TRANSLATIONS for ${urls.length} images.`);
-        let queuedCount = 0;
-        for (const url of urls) {
-          try {
-            await queueTranslation(url, targetTabId, true);
-            queuedCount++;
-          } catch (err) {
-            console.warn(`[Background] Failed to queue batch image ${url}:`, err);
-          }
+        const { queuedCount, rejectedUrls, capacity } = await queueBatchTranslations(urls, targetTabId);
+        if (rejectedUrls.length > 0) {
+          console.warn(`[Background] Batch queue refused ${rejectedUrls.length}/${urls.length} pages (capacity ${capacity}).`);
         }
-        sendResponse({ status: 'success', queuedCount, total: urls.length });
+        sendResponse({ status: 'success', queuedCount, rejectedUrls, capacity, total: urls.length });
       }).catch((err) => {
         sendResponse({ status: 'error', error: err instanceof Error ? err.message : String(err) });
       });
@@ -1010,7 +1005,51 @@ export async function sendMessageToOffscreen(
   throw new Error(`Message ${message.type} to offscreen timed out after ${timeoutMs}ms`);
 }
 
-const MAX_BATCH_QUEUE_CAPACITY = 100;
+/**
+ * Upper bound the interactive queue capacity is clamped to, so a hand-edited or legacy stored
+ * value cannot open an unbounded queue. The popup slider itself stops at 5 (see `SettingsView`).
+ */
+const MAX_INTERACTIVE_QUEUE_CAPACITY = 10;
+
+/**
+ * Interactive capacity assumed before the popup has ever saved its state. Once the popup opens it
+ * writes `DEFAULT_POPUP_STATE`, whose `concurrency` is 1.
+ */
+const DEFAULT_INTERACTIVE_QUEUE_CAPACITY = 3;
+
+/**
+ * How a request was treated by the background queue admission checks.
+ *
+ * - `queued`: a new job row was inserted.
+ * - `duplicate`: a job for this URL is already in flight, so nothing was inserted.
+ * - `capacity`: the queue was full and the request was refused.
+ */
+export type QueueAdmission = 'queued' | 'duplicate' | 'capacity';
+
+/**
+ * Clamps a stored "Max Queue Capacity" value into the range the background enforces.
+ *
+ * Single source of truth for the interactive bound: the popup slider, the interactive admission
+ * gate and the captured-crop gate all read the same stored value, so the slider cannot disagree
+ * with what the background actually enforces.
+ *
+ * @param {PopupState | undefined} popupState - The stored popup state, if the popup ever saved one.
+ * @returns {number} Queue capacity, clamped to 1–10, defaulting to 3 before the popup saves one.
+ */
+function resolveInteractiveQueueCapacity(popupState: PopupState | undefined): number {
+  const requested = popupState?.concurrency || DEFAULT_INTERACTIVE_QUEUE_CAPACITY;
+  return Math.min(MAX_INTERACTIVE_QUEUE_CAPACITY, Math.max(1, requested));
+}
+
+/**
+ * Reads the popup's saved "Max Queue Capacity" slider and resolves the enforced value.
+ *
+ * @returns {Promise<number>} Queue capacity the interactive gate should enforce.
+ */
+async function readInteractiveQueueCapacity(): Promise<number> {
+  const stateData = await chrome.storage.local.get(STORAGE_KEYS.POPUP_STATE);
+  return resolveInteractiveQueueCapacity(stateData[STORAGE_KEYS.POPUP_STATE] as PopupState | undefined);
+}
 
 /**
  * Inserts the image URL into the Dexie queue as "queued" and triggers the queue loop.
@@ -1018,9 +1057,13 @@ const MAX_BATCH_QUEUE_CAPACITY = 100;
  * @param {string} srcUrl - The URL of the image to queue.
  * @param {number} [tabId] - The ID of the tab that requested the translation (for returning result).
  * @param {boolean} [isBatch=false] - Whether this is a batch queue from the chapter scanner.
- * @returns {Promise<void>}
+ * @returns {Promise<QueueAdmission>} Whether the URL was inserted, already in flight, or refused.
  */
-export async function queueTranslation(srcUrl: string, tabId?: number, isBatch = false) {
+export async function queueTranslation(
+  srcUrl: string,
+  tabId?: number,
+  isBatch = false
+): Promise<QueueAdmission> {
   // Guard against duplicate queueing if a job for this URL is currently in flight.
   // Only actively-running jobs may be treated as stale, and only after the same
   // no-progress window reclaimStaleJobs uses: a 'queued' job can legitimately wait
@@ -1040,15 +1083,12 @@ export async function queueTranslation(srcUrl: string, tabId?: number, isBatch =
 
   if (inFlightJob && !isStale) {
     console.log('[Background] URL already in active processing. Skipping duplicate:', srcUrl);
-    return;
+    return 'duplicate';
   }
 
-  // Queue capacity guard: allow up to configured max queue capacity, or MAX_BATCH_QUEUE_CAPACITY for batch panel
-  const stateData = await chrome.storage.local.get(STORAGE_KEYS.POPUP_STATE);
-  const popupState = stateData[STORAGE_KEYS.POPUP_STATE] as PopupState | undefined;
-  const maxQueueCapacity = isBatch
-    ? MAX_BATCH_QUEUE_CAPACITY
-    : Math.min(10, Math.max(1, popupState?.concurrency || 3));
+  // Queue capacity guard: MAX_BATCH_QUEUE_CAPACITY for the chapter panel, the popup's
+  // "Max Queue Capacity" slider for single images.
+  const maxQueueCapacity = isBatch ? MAX_BATCH_QUEUE_CAPACITY : await readInteractiveQueueCapacity();
   const queuedCount = await db.translationJobs.where('status').equals('queued').count();
   if (queuedCount >= maxQueueCapacity) {
     console.warn(`[Background] Translation queue is at maximum capacity (${queuedCount}/${maxQueueCapacity}). Rejecting request:`, srcUrl);
@@ -1058,7 +1098,7 @@ export async function queueTranslation(srcUrl: string, tabId?: number, isBatch =
         payload: { originalUrl: srcUrl, error: 'Translation queue is full. Please wait for current images to finish.' }
       }).catch(() => {});
     }
-    return;
+    return 'capacity';
   }
 
   console.log('[Background] Queuing image URL:', srcUrl);
@@ -1071,6 +1111,47 @@ export async function queueTranslation(srcUrl: string, tabId?: number, isBatch =
   
   // Kick off the queue processor
   processQueue();
+  return 'queued';
+}
+
+/**
+ * Queues every page of a scanned chapter and reports which pages the queue refused.
+ *
+ * The batch panel cannot infer admission from "queueTranslation was called": a refusal used to
+ * look identical to a success, so the panel marked pages "Queued" that never received a job row
+ * and their cards spun forever. Reporting the refused URLs lets the panel show the cap and offer
+ * those pages for retry.
+ *
+ * @param {string[]} urls - Image URLs to queue, in reading order.
+ * @param {number} [tabId] - The tab that scanned the chapter, used for completion messages.
+ * @returns {Promise<{ queuedCount: number; rejectedUrls: string[]; capacity: number }>} How many
+ *   URLs are now in the queue (duplicates already waiting count as admitted), the URLs the
+ *   capacity guard refused, and the batch capacity that was enforced.
+ */
+export async function queueBatchTranslations(
+  urls: string[],
+  tabId?: number
+): Promise<{ queuedCount: number; rejectedUrls: string[]; capacity: number }> {
+  let queuedCount = 0;
+  const rejectedUrls: string[] = [];
+
+  for (const url of urls) {
+    let admission: QueueAdmission;
+    try {
+      admission = await queueTranslation(url, tabId, true);
+    } catch (err) {
+      console.warn(`[Background] Failed to queue batch image ${url}:`, err);
+      rejectedUrls.push(url);
+      continue;
+    }
+    if (admission === 'capacity') {
+      rejectedUrls.push(url);
+    } else {
+      queuedCount++;
+    }
+  }
+
+  return { queuedCount, rejectedUrls, capacity: MAX_BATCH_QUEUE_CAPACITY };
 }
 
 /**
@@ -1087,9 +1168,7 @@ async function queueCapturedTranslation(requestId: string, dataUrl: string, tabI
   const blob = await response.blob();
   const srcUrl = `kites-capture:${requestId}`;
 
-  const stateData = await chrome.storage.local.get(STORAGE_KEYS.POPUP_STATE);
-  const popupState = stateData[STORAGE_KEYS.POPUP_STATE] as PopupState | undefined;
-  const maxQueueCapacity = Math.min(10, Math.max(1, popupState?.concurrency || 3));
+  const maxQueueCapacity = await readInteractiveQueueCapacity();
   const queuedCount = await db.translationJobs.where('status').equals('queued').count();
   if (queuedCount >= maxQueueCapacity) {
     console.warn(`[Background] Translation queue is at maximum capacity (${queuedCount}/${maxQueueCapacity}). Rejecting capture request:`, srcUrl);
