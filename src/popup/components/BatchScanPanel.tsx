@@ -12,11 +12,15 @@ import {
   Layers,
   History,
   Archive,
+  Clock,
 } from 'lucide-react';
 import type { ScannedPageImage } from '../../content/scanner';
 import type { ChapterReaderPage } from '../../content/ChapterReaderModal';
+import type { PopupState } from '../../shared/types';
 import { db, type ImageRecord } from '../../db';
 import { MAX_BATCH_QUEUE_CAPACITY } from '../../shared/constants';
+import { getLanguageName } from '../../shared/utils/LanguageRegistry';
+import LanguageSelector from './LanguageSelector';
 
 export interface UnifiedGalleryItem {
   id: string; // `page:${url}` or `history:${jobId}`
@@ -30,11 +34,41 @@ export interface UnifiedGalleryItem {
   height: number;
   timestamp?: number;
   jobId?: number;
+  /** Language a stored history page was baked for; absent on live page items and on legacy rows. */
+  targetLang?: string;
+}
+
+interface BatchScanPanelProps {
+  state: PopupState;
+  updateState: (updates: Partial<PopupState>) => void;
 }
 
 interface QueueJobStatus {
+  id?: number;
   srcUrl: string;
   status: 'queued' | 'downloading' | 'processing' | 'completed' | 'error';
+  /** Last transition time; only used when a response row carries no id. */
+  timestamp?: number;
+}
+
+/**
+ * Resolves how recent a queue row is. The queue keeps every row, so row age decides a URL's status:
+ * a fresh Retranslate row must outrank the completed row it replaces, and a newer completed row
+ * must not stay shadowed by an abandoned older queued row. Response order breaks ties for fixtures
+ * that carry no id or timestamp, and `GET_QUEUE_STATUS` returns rows in id order.
+ *
+ * @param job - Job row returned by the background queue status.
+ * @returns The row id, its last-transition timestamp, or -1 when it has neither.
+ */
+const jobRecency = (job: QueueJobStatus): number => job.id ?? job.timestamp ?? -1;
+
+/** Phases of a forced Retranslate run, rendered on the button that started it. */
+type RetranslatePhase = 'idle' | 'running' | 'success' | 'error';
+
+interface RetranslateRun {
+  /** URLs this run queued; every one must report a completed job before the run counts as done. */
+  urls: string[];
+  phase: RetranslatePhase;
 }
 
 /** Highest sub-frame id probed when the reader may be embedded in an iframe (Chrome numbers sub-frames from 1). */
@@ -85,14 +119,16 @@ async function scanBestFrame(tabId: number): Promise<FrameScanResult> {
 }
 
 /**
- * XianScan-inspired Batch Chapter Page Scanner, History Gallery, and Queue Manager.
+ * Batch chapter page scanner, history gallery, and queue manager.
  * Discovers comic strip images on the active reading tab or loads from saved history,
  * displays a unified thumbnail gallery with source provenance, and lets users select
  * and queue pages for translation or launch into distraction-free reader mode.
  *
+ * @param props - Popup state and its updater, so the Source/Target pair that drives the queued
+ *   pages lives on the tab where the pages are queued.
  * @returns The rendered batch scanner panel.
  */
-export default function BatchScanPanel() {
+export default function BatchScanPanel({ state, updateState }: BatchScanPanelProps) {
   const [activeSource, setActiveSource] = useState<'page' | 'history'>('page');
   const [pageItems, setPageItems] = useState<UnifiedGalleryItem[]>([]);
   const [historyItems, setHistoryItems] = useState<UnifiedGalleryItem[]>([]);
@@ -105,6 +141,8 @@ export default function BatchScanPanel() {
   const [needsTabReload, setNeedsTabReload] = useState(false);
   const [activeJobs, setActiveJobs] = useState<Map<string, string>>(new Map());
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
+  /** Progress of the last forced Retranslate, so the button can report Running/Done instead of silence. */
+  const [retranslateRun, setRetranslateRun] = useState<RetranslateRun>({ urls: [], phase: 'idle' });
   const createdUrlsRef = useRef<string[]>([]);
   const mountedRef = useRef(true);
   /** Pages this panel submitted; only their completed job rows describe what this page load shows. */
@@ -139,12 +177,16 @@ export default function BatchScanPanel() {
     try {
       const res = await chrome.runtime.sendMessage({ type: 'GET_QUEUE_STATUS' });
       if (mountedRef.current && res?.status === 'success' && Array.isArray(res.jobs)) {
-        const jobMap = new Map<string, string>();
+        const newestJobs = new Map<string, QueueJobStatus>();
         for (const job of res.jobs as QueueJobStatus[]) {
-          if (job.srcUrl) {
-            jobMap.set(job.srcUrl, job.status);
+          if (!job.srcUrl) continue;
+          const current = newestJobs.get(job.srcUrl);
+          if (!current || jobRecency(job) >= jobRecency(current)) {
+            newestJobs.set(job.srcUrl, job);
           }
         }
+        const jobMap = new Map<string, string>();
+        for (const [url, job] of newestJobs) jobMap.set(url, job.status);
         setActiveJobs(jobMap);
       }
     } catch {}
@@ -156,14 +198,23 @@ export default function BatchScanPanel() {
    * nothing: the page reloaded, so its translation is gone from the DOM and the card must offer
    * Translate instead of claiming Done while the artwork is still in the source language.
    *
+   * A stored history page only proves it is done for the language it was baked in. Rows written
+   * before the language was recorded carry no `targetLang`, and every earlier run used whatever
+   * target the popup had at the time, so claiming Done for them is what left an English page on
+   * screen after the user switched Target to Thai.
+   *
    * @param item - Gallery item to classify.
-   * @returns True when the page is translated and must not be queued again.
+   * @returns True when the page is translated into the current target language.
    */
   const isItemTranslated = useCallback(
-    (item: UnifiedGalleryItem): boolean =>
-      item.isTranslated ||
-      (queuedHereRef.current.has(item.url) && activeJobs.get(item.url) === 'completed'),
-    [activeJobs]
+    (item: UnifiedGalleryItem): boolean => {
+      if (item.source === 'history' && item.targetLang !== state.targetLang) return false;
+      return (
+        item.isTranslated ||
+        (queuedHereRef.current.has(item.url) && activeJobs.get(item.url) === 'completed')
+      );
+    },
+    [activeJobs, state.targetLang]
   );
 
   // Loads translation history records from Dexie
@@ -219,6 +270,7 @@ export default function BatchScanPanel() {
           height: 1200,
           timestamp: job.timestamp,
           jobId: job.id,
+          targetLang: job.targetLang,
         });
       }
 
@@ -420,22 +472,37 @@ export default function BatchScanPanel() {
   );
   const skippedCount = selectedList.length - pendingToTranslate.length;
 
-  // Dispatches batch queue translation only for pending items
-  const handleQueueSelected = async () => {
-    if (isQueueing || pendingToTranslate.length === 0) return;
+  /**
+   * Sends a batch of pages to the background queue and folds the admission report back into the
+   * gallery.
+   *
+   * The panel sends the language pair it is displaying instead of letting the background read it
+   * from storage: a popup write can still be in flight when Translate is pressed right after
+   * changing Target, and the response echoes the language that was actually queued so a wrong
+   * direction would be visible here rather than on the finished page.
+   *
+   * @param urlsToQueue - Image URLs in reading order.
+   * @param force - Ignore stored pages and translate them again (the Retranslate action).
+   * @returns Nothing; feedback is rendered from the queue response.
+   */
+  const dispatchBatchQueue = async (urlsToQueue: string[], force: boolean): Promise<void> => {
+    if (isQueueing || urlsToQueue.length === 0) return;
     setIsQueueing(true);
-    setStatusMessage('Queueing pages for translation...');
+    setStatusMessage(force ? 'Re-translating pages…' : 'Queueing pages for translation...');
 
+    const requestedTargetLang = state.targetLang;
     try {
-      const urlsToQueue = pendingToTranslate.map((item) => item.url).filter(Boolean);
       const tab = await getActiveTab();
       const res = await chrome.runtime.sendMessage({
         type: 'BATCH_QUEUE_TRANSLATIONS',
-        payload: { urls: urlsToQueue },
+        payload: { urls: urlsToQueue, targetLang: requestedTargetLang, force },
         tabId: tab?.id,
       });
 
       if (res?.status === 'success') {
+        // Language the background actually queued, not the one this panel hoped for.
+        const queuedLang: string = res.targetLang ?? requestedTargetLang;
+        const queuedLangName = getLanguageName(queuedLang);
         // Pages the background restored from storage are already translated on the page: they get
         // no job row, so they must show Done instead of spinning on a job that will never exist.
         const restoredUrls = new Set<string>(res.restoredUrls ?? []);
@@ -444,18 +511,33 @@ export default function BatchScanPanel() {
         // of leaving a spinner on a page that will never translate.
         const rejectedUrls = new Set<string>(res.rejectedUrls ?? []);
         const count = res.queuedCount ?? urlsToQueue.length - rejectedUrls.size - restoredUrls.size;
+        const queuedUrls = urlsToQueue.filter((url) => !rejectedUrls.has(url) && !restoredUrls.has(url));
+        // A forced run replaces what the page shows today: drop the old status so the card reports the
+        // new job's progress instead of the previous run's completed row.
+        if (force) {
+          setActiveJobs((prev) => {
+            const next = new Map(prev);
+            for (const url of queuedUrls) next.delete(url);
+            return next;
+          });
+          setRetranslateRun({ urls: queuedUrls, phase: queuedUrls.length > 0 ? 'running' : 'idle' });
+        } else if (retranslateRun.phase === 'success' || retranslateRun.phase === 'error') {
+          setRetranslateRun({ urls: [], phase: 'idle' });
+        }
         if (rejectedUrls.size > 0) {
           setStatusMessage(
-            `Queued ${count} of ${urlsToQueue.length} pages — queue limit ${res.capacity ?? MAX_BATCH_QUEUE_CAPACITY} reached. Press Translate again as pages finish.`
+            `Queued ${count} of ${urlsToQueue.length} pages → ${queuedLangName} — queue limit ${res.capacity ?? MAX_BATCH_QUEUE_CAPACITY} reached. Press Translate again as pages finish.`
           );
         } else if (restoredUrls.size > 0) {
           setStatusMessage(
             count > 0
-              ? `Restored ${restoredUrls.size} already translated pages. Queued ${count} pages — starting sequential translation.`
+              ? `Restored ${restoredUrls.size} already translated pages. Queued ${count} pages → ${queuedLangName} — starting sequential translation.`
               : `Restored ${restoredUrls.size} already translated pages — nothing left to translate.`
           );
         } else {
-          setStatusMessage(`Queued ${count} pages. Starting sequential translation.`);
+          setStatusMessage(
+            `${force ? 'Re-translating' : 'Queued'} ${count} pages → ${queuedLangName}. Starting sequential translation.`
+          );
         }
 
         for (const url of urlsToQueue) {
@@ -466,21 +548,52 @@ export default function BatchScanPanel() {
         const nextStatus = (item: UnifiedGalleryItem) => {
           if (!urlsToQueue.includes(item.url)) return item;
           if (restoredUrls.has(item.url)) {
-            return { ...item, isTranslated: true, status: 'completed' as UnifiedGalleryItem['status'] };
+            return {
+              ...item,
+              isTranslated: true,
+              status: 'completed' as UnifiedGalleryItem['status'],
+              targetLang: queuedLang,
+            };
           }
-          return { ...item, status: (rejectedUrls.has(item.url) ? 'error' : 'queued') as UnifiedGalleryItem['status'] };
+          return {
+            ...item,
+            status: (rejectedUrls.has(item.url) ? 'error' : 'queued') as UnifiedGalleryItem['status'],
+            targetLang: queuedLang,
+          };
         };
         setPageItems((prev) => prev.map(nextStatus));
         setHistoryItems((prev) => prev.map(nextStatus));
+
+        // Ask now instead of waiting for the 2s interval: the background starts page #1 as it
+        // queues, so the first card flips to Processing while the rest report Queued.
+        void pollQueueStatus();
       } else {
         setStatusMessage(res?.error || 'Failed to queue translations.');
+        if (force) setRetranslateRun({ urls: [], phase: 'idle' });
       }
     } catch (err: any) {
       console.warn('[BatchScan] Queue dispatch failed:', err);
       setStatusMessage('Error sending translations to background queue.');
+      if (force) setRetranslateRun({ urls: [], phase: 'idle' });
     } finally {
       if (mountedRef.current) setIsQueueing(false);
     }
+  };
+
+  // Queues the selection that is not translated into the current target language yet.
+  const handleQueueSelected = async () => {
+    await dispatchBatchQueue(
+      pendingToTranslate.map((item) => item.url).filter(Boolean),
+      false
+    );
+  };
+
+  // Queues every selected page again, ignoring the Done state and every stored page.
+  const handleRetranslateSelected = async () => {
+    await dispatchBatchQueue(
+      selectedList.map((item) => item.url).filter(Boolean),
+      true
+    );
   };
 
   // Opens Chapter Reader for selected pages, or all pages in view if none selected
@@ -606,6 +719,24 @@ export default function BatchScanPanel() {
     };
   }, [scanPages, loadHistoryItems, pollQueueStatus]);
 
+  // Retranslate feedback: the queue has no completion callback, so a forced run counts as finished
+  // only once the poll reports a completed job for every URL that run queued.
+  useEffect(() => {
+    if (retranslateRun.phase !== 'running' || retranslateRun.urls.length === 0) return;
+    const statuses = retranslateRun.urls.map((url) => activeJobs.get(url));
+    if (statuses.some((status) => status === 'error')) {
+      setRetranslateRun({ urls: [], phase: 'error' });
+      setStatusMessage('Retranslate failed on some pages — press Retranslate to try them again.');
+      return;
+    }
+    if (!statuses.every((status) => status === 'completed')) return;
+    const pageCount = retranslateRun.urls.length;
+    setRetranslateRun({ urls: [], phase: 'success' });
+    setStatusMessage(
+      `Successfully translated ${pageCount} page${pageCount === 1 ? '' : 's'} → ${getLanguageName(state.targetLang)}.`
+    );
+  }, [activeJobs, retranslateRun, state.targetLang]);
+
   const selectedCountInView = currentViewItems.filter((item) => selectedMap.has(item.id)).length;
   const totalTranslatedInView = currentViewItems.filter((item) => item.isTranslated).length;
   const readyToExportCount = selectedList.length > 0
@@ -614,6 +745,10 @@ export default function BatchScanPanel() {
 
   return (
     <div className="flex flex-col gap-2.5 text-xs">
+      {/* Language pair belongs to the pages this tab queues: changing it here re-opens pages that
+          were only translated for the previous target language. */}
+      <LanguageSelector state={state} updateState={updateState} />
+
       {/* Dual-Source Segmented Control Switcher */}
       <div className="flex p-0.5 rounded-lg bg-[var(--color-paper)] border border-[var(--color-dust)] border-opacity-30 text-xs">
         <button
@@ -770,8 +905,10 @@ export default function BatchScanPanel() {
             {currentViewItems.map((item, idx) => {
               const isSelected = selectedMap.has(item.id);
               const jobStatus = activeJobs.get(item.url) || item.status;
-              const isBusy = jobStatus === 'queued' || jobStatus === 'processing' || jobStatus === 'downloading';
+              const isProcessing = jobStatus === 'processing' || jobStatus === 'downloading';
+              const isQueued = jobStatus === 'queued';
               const isDone = isItemTranslated(item);
+              const isError = jobStatus === 'error' || item.status === 'error';
 
               return (
                 <div
@@ -823,17 +960,24 @@ export default function BatchScanPanel() {
 
                     {/* Status Overlay Badge */}
                     <div className="absolute bottom-1 right-1 bg-black/80 backdrop-blur text-white text-[9px] font-mono px-1 py-0.5 rounded flex items-center gap-1">
-                      {isDone ? (
+                      {/* A running job outranks the Done badge: a page translated earlier still shows
+                          its old artwork until the new job lands, so claiming Done hides the work. */}
+                      {isProcessing ? (
+                        <>
+                          <Loader size={10} className="animate-spin text-amber-400" />
+                          <span className="text-amber-300 font-semibold">Processing</span>
+                        </>
+                      ) : isQueued ? (
+                        <>
+                          <Clock size={10} className="text-sky-400" />
+                          <span className="text-sky-300 font-semibold">Queued</span>
+                        </>
+                      ) : isDone ? (
                         <>
                           <Check size={10} className="text-emerald-400" />
                           <span className="text-emerald-300 font-semibold">Done</span>
                         </>
-                      ) : isBusy ? (
-                        <>
-                          <Loader size={10} className="animate-spin text-amber-400" />
-                          <span className="text-amber-300 capitalize">{jobStatus}</span>
-                        </>
-                      ) : item.status === 'error' ? (
+                      ) : isError ? (
                         <>
                           <AlertCircle size={10} className="text-rose-400" />
                           <span className="text-rose-300 font-semibold">Retry</span>
@@ -853,9 +997,13 @@ export default function BatchScanPanel() {
                         ? `${item.width}×${item.height}`
                         : '...'}
                     </span>
-                    {isDone ? (
+                    {isProcessing ? (
+                      <span className="text-amber-500 font-bold">Translating</span>
+                    ) : isQueued ? (
+                      <span className="text-sky-500 font-bold">Queued</span>
+                    ) : isDone ? (
                       <span className="text-emerald-500 font-bold">Translated</span>
-                    ) : item.status === 'error' ? (
+                    ) : isError ? (
                       <span className="text-rose-400 font-bold">Failed</span>
                     ) : null}
                   </div>
@@ -889,6 +1037,47 @@ export default function BatchScanPanel() {
                 ? `Translate ${pendingToTranslate.length} Pages (${skippedCount} already done)`
                 : `Translate ${pendingToTranslate.length} Selected Pages`
               : `All ${selectedList.length} Selected Pages Done`}
+          </span>
+        </button>
+
+        {/* Retranslate: the escape hatch from a page that already shows the wrong run. It ignores
+            both the Done state and every stored page, so a selection baked in another language (or
+            before the language was recorded) is translated again instead of being restored. */}
+        <button
+          onClick={handleRetranslateSelected}
+          disabled={isQueueing || selectedList.length === 0}
+          className={`w-full py-1.5 px-2 font-semibold rounded border transition-colors flex items-center justify-center gap-1.5 text-xs cursor-pointer shadow-sm disabled:opacity-50 disabled:cursor-not-allowed ${
+            retranslateRun.phase === 'success'
+              ? 'bg-emerald-500/10 border-emerald-500 text-emerald-600'
+              : retranslateRun.phase === 'error'
+              ? 'bg-rose-500/10 border-rose-500 text-rose-600'
+              : 'bg-[var(--color-vellum)] text-[var(--color-ink)] border-[var(--color-dust)] border-opacity-30 hover:border-[var(--color-editorial)] hover:text-[var(--color-editorial)]'
+          }`}
+          title={
+            retranslateRun.phase === 'success'
+              ? `Successfully translated into ${getLanguageName(state.targetLang)} — press again to translate these pages one more time`
+              : retranslateRun.phase === 'running'
+              ? `Translating ${retranslateRun.urls.length} page(s) again into ${getLanguageName(state.targetLang)}`
+              : selectedList.length === 0
+              ? 'Select the pages to translate again'
+              : `Ignore saved pages and translate ${selectedList.length} selected pages again into ${getLanguageName(state.targetLang)}`
+          }
+        >
+          {retranslateRun.phase === 'running' ? (
+            <Loader size={13} className="animate-spin text-amber-500 shrink-0" />
+          ) : retranslateRun.phase === 'success' ? (
+            <Check size={13} className="text-emerald-600 shrink-0" />
+          ) : (
+            <RotateCcw size={13} className="text-[var(--color-editorial)] shrink-0" />
+          )}
+          <span className="truncate">
+            {retranslateRun.phase === 'running'
+              ? 'Retranslating…'
+              : retranslateRun.phase === 'success'
+              ? 'Successfully translated'
+              : selectedList.length === 0
+              ? 'Retranslate Selected Pages'
+              : `Retranslate ${selectedList.length} Page${selectedList.length === 1 ? '' : 's'} → ${getLanguageName(state.targetLang)}`}
           </span>
         </button>
 

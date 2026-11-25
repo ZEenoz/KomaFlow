@@ -745,4 +745,24 @@ describe('stored translation reuse', () => {
     expect(result.queuedCount).toBe(1);
     expect(result.restoredUrls).toEqual([]);
   });
+
+  it('re-translates a stored page written before job rows recorded their language', async () => {
+    // Every row created before the language was recorded is language-unknown. Handing it back is
+    // what answered an English → Thai request with the English page the user asked to replace.
+    await storeFinishedPage(undefined);
+
+    const result = await queueBatchTranslations([PAGE_URL], 1, 'th');
+
+    expect(result.queuedCount).toBe(1);
+    expect(result.restoredUrls).toEqual([]);
+  });
+
+  it('re-translates a page that is already stored when the panel forces a retranslate', async () => {
+    await storeFinishedPage('th');
+
+    const result = await queueBatchTranslations([PAGE_URL], 1, 'th', true);
+
+    expect(result.queuedCount).toBe(1);
+    expect(result.restoredUrls).toEqual([]);
+  });
 });
