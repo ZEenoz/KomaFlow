@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_POPUP_STATE, type PopupState } from '../../shared/types';
 import EngineSelectionPanel, { orderChangedCatalog, type Engine } from './EngineSelectionPanel';
 
-const WEB_LLM_MODEL_ID = 'Llama-3.2-1B-Instruct-q4f16_1-MLC';
+const WEB_LLM_MODEL_ID = 'Qwen3.5-0.8B-q4f16_1-MLC';
 
 vi.hoisted(() => {
   (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -58,13 +58,13 @@ describe('orderChangedCatalog', () => {
 
   it('orders translation catalog: defaults -> installed -> best-of-size -> other models', () => {
     const engines: Engine[] = [
-      { id: 'gemma-2-2b-it-q4f16_1-MLC', name: 'gemma-2-2b', type: 'local', isDownloaded: false },
+      { id: 'gemma-4-E2B-it-q4f16_1-MLC', name: 'gemma-4-E2B', type: 'local', isDownloaded: false },
       { id: 'Qwen3.5-9B-q4f16_1-MLC', name: 'Qwen3.5-9B', type: 'local', isDownloaded: false },
       { id: 'custom-gpt', name: 'openai/gpt-4o', type: 'custom', isDownloaded: true },
       { id: 'cloudflare-translate', name: 'Cloud Shared Pool', type: 'api', isDownloaded: true },
       { id: 'Qwen3.5-0.8B-q4f16_1-MLC', name: 'Qwen3.5-0.8B', type: 'local', isDownloaded: false },
       { id: 'gg-translate', name: 'Google Translate', type: 'api', isDownloaded: true },
-      { id: 'Llama-3.1-70B-Instruct-q3f16_1-MLC', name: 'Llama-3.1-70B', type: 'local', isDownloaded: false },
+      { id: 'Phi-4-mini-instruct-q4f16_1-MLC', name: 'Phi-4-mini', type: 'local', isDownloaded: false },
       { id: 'Qwen3.5-4B-q4f16_1-MLC', name: 'Qwen3.5-4B', type: 'local', isDownloaded: false },
       { id: 'Qwen3.5-2B-q4f16_1-MLC', name: 'Qwen3.5-2B', type: 'local', isDownloaded: false },
     ];
@@ -78,8 +78,8 @@ describe('orderChangedCatalog', () => {
       'Qwen3.5-4B-q4f16_1-MLC',
       'Qwen3.5-2B-q4f16_1-MLC',
       'Qwen3.5-9B-q4f16_1-MLC',
-      'gemma-2-2b-it-q4f16_1-MLC',
-      'Llama-3.1-70B-Instruct-q3f16_1-MLC',
+      'gemma-4-E2B-it-q4f16_1-MLC',
+      'Phi-4-mini-instruct-q4f16_1-MLC',
     ]);
   });
 

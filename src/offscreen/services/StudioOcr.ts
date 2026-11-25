@@ -7,6 +7,7 @@ import type { InpaintManager, InpaintTier } from './InpaintManager';
 import type { TranslationManager } from './TranslationManager';
 import type { BubbleManager } from './BubbleManager';
 import { SUPPORTED_INPAINT_IDS } from '../../shared/inpaintTiers';
+import { DEFAULT_OCR_TIER_ID } from '../../shared/ocrTiers';
 import { getRenderedBlockGeometry } from '../utils/canvasTypesetting';
 import { detectBlockTextColors, type DetectedTextColor } from '../utils/textColorDetection';
 import { resolveBubbleLayoutsDetailed, type BubbleGeometry } from './BubbleLayoutService';
@@ -181,7 +182,7 @@ export async function runStudioOcr(
   const analysis = await analyzePageText({
     ocrManager: dependencies.getOcrManager(),
     imageBuffer,
-    ocrTier: payload.ocrEngineId || popupState.activeOcrId || 'v6-small',
+    ocrTier: payload.ocrEngineId || popupState.activeOcrId || DEFAULT_OCR_TIER_ID,
     ocrContext: {
       sourceLang: popupState.sourceLang !== 'auto' ? popupState.sourceLang : undefined,
       pageWidth: payload.width,

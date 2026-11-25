@@ -241,6 +241,7 @@ function pointInConvexQuad(px: number, py: number, quad: Point2D[]): boolean {
  * @param threshold - Binarization threshold deciding which pixels join a blob.
  * @param unclipRatio - Polygon dilation factor (Clipper offset), matching DBPostProcess.
  * @param resizeRatio - Model-to-original scale used by the tiled OCR path; omitted for direct maps.
+ * @param boxThreshold - Optional mean-score gate override (defaults to `BOX_THRESHOLD`, 0.5).
  * @returns Accepted quadrilaterals in original image coordinates, each with its DBNet score.
  */
 export function extractPolygons(
@@ -251,7 +252,8 @@ export function extractPolygons(
   originalHeight: number,
   threshold: number = 0.3,
   unclipRatio: number = 1.5,
-  resizeRatio?: number
+  resizeRatio?: number,
+  boxThreshold?: number
 ): DetectedPolygon[] {
   const binaryMap = new Uint8Array(width * height);
   for (let i = 0; i < width * height; i++) {
@@ -323,7 +325,9 @@ export function extractPolygons(
         const shortSide = Math.min(edgeAB, edgeBC);
         const isVerticalColumn = longSide * scale >= VERTICAL_COLUMN_MIN_LONG_SIDE_PX
           && longSide >= shortSide * VERTICAL_COLUMN_MIN_ASPECT;
-        if (score < (isVerticalColumn ? VERTICAL_COLUMN_BOX_THRESHOLD : BOX_THRESHOLD)) {
+        const effectiveBoxThreshold = boxThreshold ?? BOX_THRESHOLD;
+        const effectiveVerticalThreshold = Math.min(effectiveBoxThreshold, VERTICAL_COLUMN_BOX_THRESHOLD);
+        if (score < (isVerticalColumn ? effectiveVerticalThreshold : effectiveBoxThreshold)) {
           rejectedLowScore++;
           continue;
         }

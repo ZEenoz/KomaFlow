@@ -51,18 +51,23 @@ Kites employs an optimized TypeScript port of Baidu's **PaddleOCR (PP-OCR)** pip
 ### 2. SVTR / CRNN Text Recognition
 - **Architecture:** Single Visual Model for Text Recognition (SVTR) combined with Connectionist Temporal Classification (CTC) beam search.
 - **Input:** Projectively rectified text crops ($32\text{ px}$ fixed height, rotated $90^\circ$ for vertical text lines).
-- **Character Dictionaries:** Mapped character lookup tables (`ppocrv6_dict.txt`, `japan_dict.txt`, etc.).
+- **Character Dictionaries:** Mapped character lookup tables (`ppocrv6_dict.txt`, `ppocrv5_korean_dict.txt`, `ppocrv5_th_dict.txt`, etc.).
 
 ### 3. OCR Registry Tiers (`ocrRegistry.ts`)
 
 | Tier ID | Model Name | Role & Trade-offs | Detection ONNX | Recognition ONNX |
 | :--- | :--- | :--- | :--- | :--- |
 | `v6-small` *(Default)* | PP-OCRv6 Small | Fastest, balanced accuracy; optimal for most manga | `PP-OCRv6_small_det.onnx` | `PP-OCRv6_small_rec.onnx` |
+| `v6-manga` | PP-OCRv6 Manga | Japanese/Chinese manga fine-tune for dense balloon lettering | `manga_det.onnx` | `manga_rec.onnx` |
 | `v6-medium` | PP-OCRv6 Medium | Higher capacity for stylized fonts and dense pages | `PP-OCRv6_medium_det.onnx` | `PP-OCRv6_medium_rec.onnx` |
 | `v6-tiny` | PP-OCRv6 Tiny | Ultra-lightweight for memory-constrained environments | `PP-OCRv6_tiny_det.onnx` | `PP-OCRv6_tiny_rec.onnx` |
-| `v5-server` | PP-OCRv5 Server | High-precision server weights from v5 series | `PP-OCRv5_server_det_infer.onnx` | `PP-OCRv5_server_rec_infer.onnx` |
+| `v5-mobile` | PP-OCRv5 Mobile | General multilingual v5 mobile weights | `PP-OCRv5_mobile_det_infer.onnx` | `PP-OCRv5_mobile_rec_infer.onnx` |
+| `v5-server` | PP-OCRv5 Server | High-precision server weights from the v5 series | `PP-OCRv5_server_det_infer.onnx` | `PP-OCRv5_server_rec_infer.onnx` |
 | `v5-en-mobile` | PP-OCRv5 English | Specialized for Latin/English comics | `PP-OCRv5_mobile_det_infer.onnx` | `en_PP-OCRv5_mobile_rec_infer.onnx` |
-| `v3-multilingual` | PP-OCRv3 Multi | Cotrans v3 legacy multilingual & Japanese dictionary | `PP-OCRv3_mobile_det.onnx` | `japan_rec.onnx` |
+| `v5-ko-mobile` | PP-OCRv5 Korean | Korean-tuned v5 mobile recognition | `PP-OCRv5_mobile_det_infer.onnx` | `korean_PP-OCRv5_mobile_rec_infer.onnx` |
+| `v5-th-mobile` | PP-OCRv5 Thai | Thai-tuned v5 mobile recognition | `PP-OCRv5_mobile_det_infer.onnx` | `th_PP-OCRv5_mobile_rec_infer.onnx` |
+
+The tier catalog (`src/shared/ocrTiers.ts`) is the UI and validation source of truth; `ocrRegistry` is typed as an exhaustive `Record<OcrTierId, entry>`, so adding a tier without weights is a compile error. Only `v6-manga` overrides DBNet post-processing (`detectionThreshold: 0.15`, `unclipRatio: 1.5`, `boxThreshold: 0.25`); every other tier keeps the detector defaults (`0.3` / `1.8` / `0.5` horizontal, `0.35` vertical). Unknown and removed legacy IDs (`paddle-dbnet`, `v4-*`, `v3-*`) resolve to `v6-small`.
 
 ---
 
@@ -106,15 +111,17 @@ flowchart TD
 - Diffuses surrounding image colors inward across the `Binarizer` stroke mask.
 - **Taylor Series Gradient Stabilization:** Incorporates an epsilon guard ($\epsilon = 10^{-6}$) and clamped gradient vectors, eliminating numerical overflow (`NaN`/`Infinity`) and runaway narrow-band loops (ADR-007).
 
-### 4. LaMa Manga (`ogkalu/lama-manga-onnx-dynamic`, ~50 MB)
+### 4. LaMa Manga (`ogkalu/lama-manga-onnx-dynamic`, ~197 MB)
 - **Architecture:** Resolution-robust Large Mask Inpainting (LaMa) using Fast Fourier Convolutions (FFC).
 - **Domain Fine-Tuning:** Trained on manga, anime line art, screentones, and speech balloon textures.
 - **Dynamic 64px Patching:** Slices out the local bubble cluster, snaps dimensions to multiples of 64 ($\lceil\text{dim}/64\rceil \times 64$, minimum $128\text{ px}$), and pastes back at 1:1 pixel coordinates without resolution loss.
 
-### 5. AOT-GAN (`Unhead/aotgan`, ~60 MB)
+### 5. AOT-GAN (`Unhead/aotgan`, ~23 MB)
 - **Architecture:** Aggregated Contextual Transformations GAN.
 - **Weights:** Ships split weights (`aotgan.onnx` graph + `aotgan-dynamic.onnx.data` external tensors).
 - **Capability:** Reconstructs complex screentone patterns, halftone dots, and speedline backgrounds when erasing sound effects (SFX).
+
+**Rejected for browser-local tiers:** MI-GAN is a mobile GAN trained for natural-image inpainting, with no manga or screentone fine-tune, so it would add a tier without evidence it beats LaMa on line art. Stable Diffusion and Moebius are iterative diffusion inpainters: every patch needs a multi-step sampler and scheduler that the current single-pass ONNX runtimes do not implement, and SD-family weights are multi-GB. FLUX.2-klein-9B is a 9B-parameter rectified-flow model; even 4-bit weights run to several GB and every patch needs several denoising steps.
 
 ### 6. Simple Inpaint (Adaptive Polarity Fill, 0 MB Built-in)
 - **Zero-Model CPU Algorithm:** Instant execution for clean dialogue bubbles.
@@ -138,24 +145,26 @@ graph TD
 ### 1. WebLLM (On-Device WebGPU Inference)
 - **Framework:** `@mlc-ai/web-llm` (v0.2.89) running TVM/Relax compiled WebGPU shaders.
 - **Privacy Guarantee:** Complete on-device execution. Model weights are cached locally in the browser's Cache API / IndexedDB.
-- **KV cache is the library's:** allocated once at load, never grown, and reset by the engine whenever the incoming conversation differs from the one in memory. Kites does **not** call `resetChat()` between batches: that call takes no per-model lock, so it could clear KV under a stream that is still unwinding, and the engine resets anyway. `maxContextWindow` here is a planning budget only; the GPU window is set at load through `WEBLLM_CHAT_OPTIONS` (2048 tokens — 4096 is the catalogue default on 53 of 59 records, and 1024 would leave no slack over an estimated input budget).
+- **KV cache is the library's:** allocated once at load, never grown, and reset by the engine whenever the incoming conversation differs from the one in memory. Kites does **not** call `resetChat()` between batches: that call takes no per-model lock, so it could clear KV under a stream that is still unwinding, and the engine resets anyway. `maxContextWindow` here is a planning budget only; the GPU window is set at load through `WEBLLM_CHAT_OPTIONS` (2048 tokens — 4096 is the catalogue default on every one of the 23 records, and 1024 would leave no slack over an estimated input budget).
 - **Thinking models get no flag. `enable_thinking: false` is deliberately not sent, including to `Qwen3`/`Qwen3.5` templates that support the mechanism: measured on this pipeline it pushed Japanese→English from 11.5% to 34.6% of slots handed back untranslated and moved the Chinese combos inside the noise band. The runtime never checks the template, and with the flag off it prefills `\n\n` into the prompt *and* the returned content, which the keyed-JSON parser strips — so the mechanism is available if a future model measures better, but nothing depends on it.
 - **Exact usage:** requests set `stream_options: { include_usage: true }`; the runtime only emits `usage` when asked (it arrives on a terminal chunk with empty `choices`), which is what makes the dev-mode tokens-per-second line exact rather than counted.
 - **Storage:** the manifest requests `unlimitedStorage`. WebLLM's default cache backend is the Cache API, so multi-gigabyte weights live in the extension origin, which also holds Studio project data; without the permission the origin is quota-managed and eviction is whole-origin, not per-file.
-- **Preflight:** before `CreateMLCEngine`, `checkModelLoadability` compares a record's `required_features` and `buffer_size_required_bytes` with the adapter reported by `probeWebGPUAdapter`. 17 of the 59 registry entries declare one of those fields; the Qwen records declare none. There is no VRAM gate: `vram_required_MB` is a catalogue literal, and no WebGPU API reports device memory.
-- **Curated 2026 Model Registry:**
-  - `Qwen2.5-1.5B-Instruct-q4f16_1-MLC` & `Qwen3-1.7B-Instruct-q4f16_1-MLC` (Leading multilingual performance for Japanese, Korean, and Chinese manga).
-  - `Llama-3.2-1B-Instruct-q4f16_1-MLC` (Fast, high-quality Latin/Western dialogue).
-  - `Gemma-3-1B-it-q4f16_1-MLC` (Compact Google vision/text architecture).
-  - `Ministral-3B-Instruct-q4f16_1-MLC` (High reasoning capacity for dense literary prose).
-  - `SmolLM2-135M-Instruct-q0f16-MLC` (Ultra-lightweight pipeline verification tier).
+- **Preflight:** before `CreateMLCEngine`, `checkModelLoadability` compares a record's `required_features` and `buffer_size_required_bytes` with the adapter reported by `probeWebGPUAdapter`. 3 of the 23 registry entries declare one of those fields (both Gemma 4 variants and LFM2.5 q4f16); the Qwen records declare none. There is no VRAM gate: `vram_required_MB` is a catalogue literal, and no WebGPU API reports device memory.
+- **Curated 2026 Model Registry (23 entries):**
+  - `Qwen3.5` 0.8B / 2B / 4B / 9B, q4f16 and q4f32 (8 entries) — widest coverage at 201 languages; the translation tiers are pinned around these.
+  - `Qwen3` 1.7B / 4B / 8B, q4f16 and q4f32 (6 entries) — 119 languages; Qwen3-1.7B is the best measured sub-2B translator.
+  - `LFM2.5-1.2B-Instruct`, q4f16 and q4f32 (2 entries) — fastest strong small model; 8 languages including CJK.
+  - `gemma3-1b-it` (1), `gemma-4-E2B-it` (2), `Phi-4-mini-instruct` (2), `Ministral-3-3B-Instruct-2512-BF16` (2) — modern alternatives kept for compatibility; Gemma 4 awaits a recorded `npm run gate:translation` benchmark before it can be pinned.
+  - Legacy model families were pruned so the catalogue only offers maintained models.
 
 ### 2. Cloudflare Shared Pool (`worker/`)
 - Edge-hosted community pool with multi-provider failover:
-  - **Mistral AI:** Ministral 3B.
-  - **Groq:** Qwen 2.5 72B / GPT-OSS 120B.
-  - **Google AI Studio:** Gemma 4 26B / 31B.
-  - **Cloudflare Workers AI:** Llama 3.2 1B.
+  - **Groq:** GPT-OSS 120B / Qwen 3.8 27B / GPT-OSS 20B (`json-schema`).
+  - **OpenTyphoon:** Typhoon 2.5 30B A3B (`prompt-only`).
+  - **Google AI Studio:** Gemma 4 26B / 31B (`json-schema`).
+  - **OpenRouter Free:** router-selected free backend (`json-schema` with `require_parameters`).
+  - **Mistral AI:** Ministral 3B (`json-object`).
+  - **Cloudflare Workers AI:** Llama 3.2 1B (`json-object`).
 
 ### 3. Custom API & Google Translate
 - Direct user-configured endpoints supporting OpenAI GPT-4o, Anthropic Claude 3.5 Sonnet, and Google Gemini 1.5 Pro.
@@ -195,6 +204,8 @@ A 12% safe core applies to computed-box paths, not every contour route. Closed s
 - **Input:** 1024 × 1024; YOLO11n box predictions and prototype segmentation masks. `NeuralBubbleEngine` converts matched masks into per-text-box shape evidence before contour extraction.
 - **Execution provider:** requested WebGPU uses `powerPreference: 'high-performance'`, with WASM fallback. The registry does not select a separate FP16 model, and browser thread availability must not be assumed.
 - **Caching:** `BubbleCacheManager` checks `kites-bubble-models-v1`; an uncached model can make neural detection unavailable. The UI tier and a successful script exit are not proof that neural inference ran.
+- **Upstream license unresolved (open audit item):** `huyvux3005/manga109-segmentation-bubble` declares `CC-BY-NC-4.0` in its YAML but `Apache-2.0` on the model card. The ONNX export inherits that contradiction; resolve it before treating the weights as redistributable.
+- **Bbox-only detectors rejected:** Bbox-only checkpoints of RT-DETR v2 and YOLO26 emit boxes without masks. The neural tier matches prototype masks to OCR boxes and passes their contours to layout, so a box-only model would need a second segmentation stage; the active YOLO11n-seg export already returns both in one pass.
 
 ### 3. Historical detector and tier taxonomy
 The previous 640px detector-v4 model and separate `neural-mask` choice are historical. Current public modes are `off`, `heuristic`, and `neural`; legacy `neural-mask` selections normalize to `neural`. Segmentation is already part of the active neural implementation, not a deferred extra tier.
@@ -219,7 +230,7 @@ The previous 640px detector-v4 model and separate `neural-mask` choice are histo
 5. **Deleting a Downloaded WebLLM Model:**
    - `webllm/model` (tensor shards, `tensor-cache.json` manifest, tokenizer), `webllm/config` (`mlc-chat-config.json`) and `webllm/wasm` (compiled `model_lib`) are the three caches WebLLM owns; the names live in `WEBLLM_CACHE_SCOPES` (`src/shared/constants.ts`) because they are the library's on-disk contract.
    - `WebLlmCacheManager.deleteModel()` sweeps every key under the model's `cleanModelUrl()` prefix (always `.../resolve/main/`, so a `-MLC-1k` sibling never matches a `-MLC` prefix) and never touches the network. The library's `deleteModelAllInfoInCache()` is deliberately unused: it never deletes the manifest, and `ArtifactCache.addToCache` only writes missing keys, so it leaves a stale manifest that a later download would reuse.
-   - A `model_lib` is deleted only when no other installable registry model references it (11 of the 59 registry models are shared-library pairs), so deleting one model cannot break another model's offline cold start.
+   - A `model_lib` is deleted only when no other installable registry model references it. The current 23-entry registry has no shared-library pairs after the legacy 1k siblings were pruned, so the guard is a no-op today; it stays in place for future models that share a compiled library.
    - The deletion runs inside `TranslationManager`'s lifecycle queue: in-flight translations finish, a resident engine is unloaded first, and files are left untouched if the unload rejects. A download that is running or queued refuses the request, because WebLLM exposes no cancellation and the stream would re-populate the cache after the sweep.
    - The popup resets `activeEngineId` to `gg-translate` (and prunes `fallbackChain`) when the deleted model was selected, so `PRELOAD_ACTIVE_ENGINE` on the next browser start cannot silently re-download the freed gigabytes.
    - Deletion is per-model only. A whole-cache sweep is not exposed; a registry entry that has drifted out of the bundled catalog surfaces an explicit error instead.

@@ -2,6 +2,18 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { prebuiltAppConfig } from '@mlc-ai/web-llm';
 import { WebLlmCacheManager } from './WebLlmCacheManager';
 
+// The curated registry no longer has two models that share weights or a wasm library, so the
+// registry is mocked with catalog ids that do. That keeps the shared-file guards covered even
+// though the production registry cannot reach them today.
+vi.mock('../../shared/models-registry.json', () => ({
+  default: [
+    { id: 'Qwen3-1.7B-q4f16_1-MLC' },
+    { id: 'Qwen3.5-0.8B-q4f16_1-MLC' },
+    { id: 'stablelm-2-zephyr-1_6b-q4f16_1-MLC' },
+    { id: 'stablelm-2-zephyr-1_6b-q4f16_1-MLC-1k' },
+  ],
+}));
+
 /**
  * Resolves the cache key prefix a model's files are stored under.
  *
@@ -21,16 +33,12 @@ function modelPrefix(modelId: string): string {
 
 /** A model whose cache files and wasm library belong only to it. */
 const TARGET_MODEL = 'Qwen3-1.7B-q4f16_1-MLC';
-/** A model that shares its wasm library with another registry model. */
-const SHARED_LIB_MODEL = 'Qwen2-0.5B-Instruct-q4f16_1-MLC';
-/** The registry model that shares {@link SHARED_LIB_MODEL}'s wasm library. */
-const SHARED_LIB_SIBLING = 'Qwen2.5-0.5B-Instruct-q4f16_1-MLC';
+/** Two catalog-only ids that share both weights and a wasm library. */
+const SHARED_MODEL = 'stablelm-2-zephyr-1_6b-q4f16_1-MLC';
+/** The id that shares {@link SHARED_MODEL}'s weights, chat config and wasm library. */
+const SHARED_MODEL_SIBLING = 'stablelm-2-zephyr-1_6b-q4f16_1-MLC-1k';
 /** An unrelated model that must survive a deletion untouched. */
 const OTHER_MODEL = 'Qwen3.5-0.8B-q4f16_1-MLC';
-/** One of the six catalog ids that store the same files on disk as another id. */
-const SHARED_WEIGHT_MODEL = 'gemma-2-2b-it-q4f16_1-MLC';
-/** The id that shares {@link SHARED_WEIGHT_MODEL}'s weights and chat config. */
-const SHARED_WEIGHT_SIBLING = 'gemma-2-2b-it-q4f16_1-MLC-1k';
 
 /**
  * Resolves a catalog record for an id the tests rely on.
@@ -114,16 +122,16 @@ describe('WebLlmCacheManager.deleteModel', () => {
   });
 
   it('keeps a wasm library that another installable model still needs', async () => {
-    const target = modelPrefix(SHARED_LIB_MODEL);
-    const sharedLib = catalogRecord(SHARED_LIB_MODEL).model_lib;
-    expect(catalogRecord(SHARED_LIB_SIBLING).model_lib).toBe(sharedLib);
+    const target = modelPrefix(SHARED_MODEL);
+    const sharedLib = catalogRecord(SHARED_MODEL).model_lib;
+    expect(catalogRecord(SHARED_MODEL_SIBLING).model_lib).toBe(sharedLib);
     const { stores } = installFakeCaches({
       'webllm/model': [`${target}tensor-cache.json`, `${target}params_shard_0.bin`],
       'webllm/config': [`${target}mlc-chat-config.json`],
       'webllm/wasm': [sharedLib],
     });
 
-    await WebLlmCacheManager.deleteModel(SHARED_LIB_MODEL);
+    await WebLlmCacheManager.deleteModel(SHARED_MODEL);
 
     expect(stores.get('webllm/wasm')).toEqual([sharedLib]);
   });
@@ -163,16 +171,16 @@ describe('WebLlmCacheManager.deleteModel', () => {
   });
 
   it('reports the catalog models whose files were removed because they share the same weights', async () => {
-    const shared = modelPrefix(SHARED_WEIGHT_MODEL);
+    const shared = modelPrefix(SHARED_MODEL);
     installFakeCaches({
       'webllm/model': [`${shared}tensor-cache.json`, `${shared}params_shard_0.bin`],
       'webllm/config': [`${shared}mlc-chat-config.json`],
       'webllm/wasm': [],
     });
 
-    const outcome = await WebLlmCacheManager.deleteModel(SHARED_WEIGHT_MODEL);
+    const outcome = await WebLlmCacheManager.deleteModel(SHARED_MODEL);
 
-    expect(outcome.alsoRemoved).toContain(SHARED_WEIGHT_SIBLING);
+    expect(outcome.alsoRemoved).toContain(SHARED_MODEL_SIBLING);
   });
 
   it('never touches the network, so a deletion works offline', async () => {

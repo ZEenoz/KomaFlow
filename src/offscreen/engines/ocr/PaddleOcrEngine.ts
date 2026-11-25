@@ -3,6 +3,7 @@ import { checkWebGPUAvailability } from '../../utils/hardware';
 import { CustomPaddleDetector } from './CustomPaddleDetector';
 import { ocrRegistry, resolveOcrTier } from './ocrRegistry';
 import { OcrCacheManager } from '../../services/OcrCacheManager';
+import { DEFAULT_OCR_TIER_ID } from '../../../shared/ocrTiers';
 import {
   generate1DTileRects,
   isTallStrip,
@@ -118,7 +119,7 @@ export class PaddleOcrEngine implements IOcrEngine {
   private isWebGpuActive = false;
   private modelPreset: string;
 
-  constructor(modelPreset: string = 'v6-small') {
+  constructor(modelPreset: string = DEFAULT_OCR_TIER_ID) {
     this.modelPreset = resolveOcrTier(modelPreset);
   }
 
@@ -211,12 +212,12 @@ export class PaddleOcrEngine implements IOcrEngine {
         : ['wasm'];
 
       let modelConfig: any;
+      const entry = ocrRegistry[canonicalPreset];
       if (isNode) {
         // Node keeps the stock `.ort` weights: native onnxruntime-node loads them fine
         const presetUrls = MODEL_PRESETS[canonicalPreset] || MODEL_PRESETS['v6-small'] || MODEL_PRESETS['v6-medium'];
         modelConfig = presetUrls;
       } else {
-        const entry = ocrRegistry[canonicalPreset] || ocrRegistry['v6-small'];
         try {
           // Pre-fetch model weights and dictionary via Cache API so inference runs 100% offline
           const [detBuffer, recBuffer, dictBuffer] = await Promise.all([
@@ -231,8 +232,14 @@ export class PaddleOcrEngine implements IOcrEngine {
           };
         } catch (cacheErr) {
           console.warn(`[PaddleOcrEngine] Could not load from cache, falling back to URLs:`, cacheErr);
-          const rawUrls = MODEL_PRESETS[canonicalPreset] || MODEL_PRESETS['v6-small'];
-          modelConfig = toOnnxModelUrls(rawUrls);
+          const presetUrls = MODEL_PRESETS[canonicalPreset];
+          modelConfig = presetUrls
+            ? toOnnxModelUrls(presetUrls)
+            : {
+                detection: entry.detectionUrl,
+                recognition: entry.recognitionUrl,
+                charactersDictionary: entry.charactersDictionaryUrl
+              };
         }
       }
 
@@ -279,7 +286,11 @@ export class PaddleOcrEngine implements IOcrEngine {
           : '[PaddleOcrEngine] CPU execution configured: Detection -> WASM, Recognition -> WASM'
       );
 
-      this.customDetector = new CustomPaddleDetector(this.service);
+      this.customDetector = new CustomPaddleDetector(this.service, {
+        detectionThreshold: entry.detectionThreshold,
+        unclipRatio: entry.unclipRatio,
+        boxThreshold: entry.boxThreshold,
+      });
       this.isInitialized = true;
       console.log(`[PaddleOcrEngine] Initialization complete in ${(performance.now() - startTime).toFixed(2)}ms.`);
     } catch (e) {

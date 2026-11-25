@@ -13,6 +13,7 @@ import { db, type TranslationJob, type ImageRecord, type TextBlock } from '../..
 import { useStudioStore } from '../state/studioStore';
 import { RENDER_FONT_PRESETS } from '../../shared/renderFontPresets';
 import { COLOR_TIER_CATALOG } from '../../shared/colorTiers';
+import { OCR_TIER_CATALOG } from '../../shared/ocrTiers';
 
 export interface PageInfoSettingsProps {
   jobId?: number;
@@ -26,21 +27,14 @@ interface PageData {
 }
 
 /**
- * Resolves a human-readable display label for the OCR engine ID.
+ * Resolves a human-readable display label for the OCR engine ID from the canonical catalog.
  * @param id - Engine identifier from database.
  * @returns Formatted label.
  */
 function resolveOcrLabel(id?: string): string {
-  switch (id) {
-    case 'v6-small':
-      return 'Paddle OCR v6 Small';
-    case 'v6-large':
-      return 'Paddle OCR v6 Large';
-    case 'manga-ocr':
-      return 'Manga-OCR (ViT)';
-    default:
-      return id || 'Paddle OCR v6';
-  }
+  if (!id) return 'PaddleOCR v6';
+  const found = OCR_TIER_CATALOG.find((tier) => tier.id === id);
+  return found ? found.name : id;
 }
 
 /**

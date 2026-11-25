@@ -75,7 +75,7 @@ describe('WebLLMEngine Keyed JSON Protocol', () => {
       maxStorageBufferBindingSize: 1024 * 1024 * 1024,
     });
     mockModelList.length = 0;
-    engine = new WebLLMEngine('Qwen2.5-3B-Instruct-q4f16_1-MLC');
+    engine = new WebLLMEngine('Qwen3.5-0.8B-q4f16_1-MLC');
     await engine.init();
   });
 
@@ -125,7 +125,7 @@ describe('WebLLMEngine Keyed JSON Protocol', () => {
     // multi-gigabyte model, with its own GPU context, that nothing ever releases.
     // A fresh engine: the shared one is already initialized by `beforeEach`, and an initialized
     // engine returns early instead of racing.
-    const racing = new WebLLMEngine('Qwen2.5-3B-Instruct-q4f16_1-MLC');
+    const racing = new WebLLMEngine('Qwen3.5-0.8B-q4f16_1-MLC');
     mockCreateEngine.mockClear();
 
     const first = racing.init();
@@ -395,7 +395,7 @@ describe('WebLLM engine configuration', () => {
     mockCreate.mockResolvedValue({
       choices: [{ message: { content: JSON.stringify({ b0: 'translated' }) }, finish_reason: 'stop' }],
     });
-    engine = new WebLLMEngine('Qwen2.5-3B-Instruct-q4f16_1-MLC');
+    engine = new WebLLMEngine('Qwen3.5-0.8B-q4f16_1-MLC');
     await engine.init();
   });
 
@@ -472,7 +472,7 @@ describe('temperatureForAttempt', () => {
     // leaves as a normal call and comes back as a context-window error that loses the whole page.
     // A single oversized segment cannot be split, so the only honest signal is the warning.
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const local = new WebLLMEngine('Qwen2.5-3B-Instruct-q4f16_1-MLC');
+    const local = new WebLLMEngine('Qwen3.5-0.8B-q4f16_1-MLC');
     await local.init();
     (local as any).maxContextWindow = 120;
 
@@ -486,7 +486,7 @@ describe('temperatureForAttempt', () => {
     // The budget is per page, so exhausting it leaves real lines on their source text while
     // `translate()` still returns a complete array. Without this the page looks translated.
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const local = new WebLLMEngine('Qwen2.5-3B-Instruct-q4f16_1-MLC');
+    const local = new WebLLMEngine('Qwen3.5-0.8B-q4f16_1-MLC');
     await local.init();
     (local as any).recoveryRequestBudget = 1;
     // Every answer echoes the source, so both slots fail and the single retry cannot save them.
@@ -508,7 +508,7 @@ describe('temperatureForAttempt', () => {
     // requests instead of how often this content had been asked. Each line is asked once, so a line's
     // temperature must not depend on how many other lines failed before it.
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const local = new WebLLMEngine('Qwen2.5-3B-Instruct-q4f16_1-MLC');
+    const local = new WebLLMEngine('Qwen3.5-0.8B-q4f16_1-MLC');
     await local.init();
     mockCreate.mockReset();
     mockCreate.mockImplementation(async (request: any) => {

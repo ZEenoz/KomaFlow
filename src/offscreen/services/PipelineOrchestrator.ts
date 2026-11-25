@@ -4,6 +4,7 @@ import { DEFAULT_SFX_POLICY, isPreservedArtwork, resolveSfxPolicyStrategy } from
 import { isPipelineAuditEnabled, logPipelineAudit } from './pipelineAudit';
 import type { PopupState, ModelInitializationStage } from '../../shared/types';
 import { OcrManager, type InitializationLifecycleCallback, type OcrTier } from './OcrManager';
+import { DEFAULT_OCR_TIER_ID } from '../../shared/ocrTiers';
 import { TranslationManager, translationManager as defaultTranslationManager } from './TranslationManager';
 import { InpaintManager } from './InpaintManager';
 import type { InpaintTier } from './InpaintManager';
@@ -212,7 +213,7 @@ export class PipelineOrchestrator {
       const sourceLang = popupState?.sourceLang || 'auto';
       const targetLang = popupState?.targetLang || 'en';
       const hyphenationPromise = loadHyphenationLanguage(targetLang);
-      const ocrTier: OcrTier = popupState?.activeOcrId || 'v6-small';
+      const ocrTier: OcrTier = popupState?.activeOcrId || DEFAULT_OCR_TIER_ID;
       const resolvedFontFamily = resolveRenderFontFamily(popupState?.renderFontPresetId);
       const renderFontBold = popupState?.renderFontBold === true;
       const renderFontItalic = popupState?.renderFontItalic === true;

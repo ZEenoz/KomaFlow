@@ -70,4 +70,31 @@ describe('NeuralBubbleDetector container safety', () => {
     expect(NeuralBubbleDetector.matchBubbleIndex(text, [bubbleA, bubbleB])).toBe(1);
     expect(NeuralBubbleDetector.matchBubbleIndex(text, [bubbleA])).toBe(-1);
   });
+
+  it('guards per-box proto masks: output1 yields masks, a bbox-only export yields undefined', () => {
+    const numAnchors = 1;
+    const data = new Float32Array(37 * numAnchors);
+    data[0] = 512;                              // cx
+    data[numAnchors] = 512;                     // cy
+    data[2 * numAnchors] = 200;                 // w
+    data[3 * numAnchors] = 200;                 // h
+    data[4 * numAnchors] = 0.9;                 // score
+    const output0 = { dims: [1, 37, numAnchors], data };
+    const output1 = {
+      dims: [1, 32, 256, 256],
+      data: new Float32Array(32 * 256 * 256).fill(-1),
+    };
+
+    const withMasks = NeuralBubbleDetector.parseYolo11Output(
+      output0, 1024, 1024, 1024, 0.35, 0.45, output1,
+    );
+    const bboxOnly = NeuralBubbleDetector.parseYolo11Output(
+      output0, 1024, 1024, 1024, 0.35, 0.45,
+    );
+
+    // Both exports detect the same bubble; only the segmentation export carries mask data.
+    expect(withMasks.bubbles).toEqual(bboxOnly.bubbles);
+    expect(withMasks.items?.[0].protoMask).toBeDefined();
+    expect(bboxOnly.items?.[0].protoMask).toBeUndefined();
+  });
 });

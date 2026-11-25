@@ -21,8 +21,8 @@ export const INPAINT_TIER_CATALOG: readonly InpaintTierDescriptor[] = [
   { id: 'simple', name: 'Simple Fill', tag: 'Fast Color', isBuiltin: true },
   { id: 'stroke-fill', name: 'Precise Fill', tag: 'Text Stroke', isBuiltin: true },
   { id: 'telea', name: 'Telea Diffusion', tag: 'Fast Diffusion', isBuiltin: true },
-  { id: 'lama-manga', name: 'LaMa Manga', tag: 'Neural Dynamic', isModel: true, sizeEstimate: '~50 MB' },
-  { id: 'aotgan', name: 'AOT-GAN', tag: 'Neural High-Detail', isModel: true, sizeEstimate: '~60 MB' },
+  { id: 'lama-manga', name: 'LaMa Manga', tag: 'Neural Dynamic', isModel: true, sizeEstimate: '~197 MB' },
+  { id: 'aotgan', name: 'AOT-GAN', tag: 'Neural High-Detail', isModel: true, sizeEstimate: '~23 MB' },
 ] as const;
 
 export type InpaintTierId =

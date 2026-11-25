@@ -37,12 +37,12 @@ describe('formatVramEstimate', () => {
 
   it('formats every catalogue entry to at most six characters', () => {
     // The label shares a 10 px line with the `[WEBGPU]` tag; a regression that prints megabytes for
-    // the 31 GB model would push the row wider than the panel.
+    // a multi-gigabyte model would push the row wider than the panel.
     const registry = JSON.parse(
       readFileSync(join(__dirname, '../models-registry.json'), 'utf8')
     ) as Array<{ id: string; vramEstimate: string }>;
 
-    expect(registry).toHaveLength(59);
+    expect(registry).toHaveLength(23);
     for (const model of registry) {
       const label = formatVramEstimate(model.vramEstimate);
       expect(label, model.id).toMatch(/^(~\d+(\.\d)? (MB|GB))$/);

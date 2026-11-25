@@ -24,6 +24,7 @@ import { inpaintRegistry } from './engines/inpaint/inpaintRegistry';
 import { BUILTIN_INPAINT_IDS } from '../shared/inpaintTiers';
 import { colorRegistry } from './engines/color/colorRegistry';
 import { BUILTIN_COLOR_IDS, type ColorTierId } from '../shared/colorTiers';
+import { DEFAULT_OCR_TIER_ID } from '../shared/ocrTiers';
 import { isColorGpuAvailable } from '../shared/utils/hardwareUtils';
 import { ocrRegistry, resolveOcrTier } from './engines/ocr/ocrRegistry';
 import { bubbleRegistry } from './engines/bubble/bubbleRegistry';
@@ -646,17 +647,17 @@ async function runTranslationPipeline(jobId: number): Promise<string> {
   return await pipelineOrchestrator.runPipeline(jobId, reportInitialization);
 }
 
-// Auto-check and cache default OCR model (v6-small) when offscreen document initializes
+// Auto-check and cache default OCR model when offscreen document initializes
 if (typeof caches !== 'undefined') {
-  OcrCacheManager.isModelCached('v6-small')
+  OcrCacheManager.isModelCached(DEFAULT_OCR_TIER_ID)
     .then((isCached) => {
       if (!isCached) {
-        console.log('[Offscreen] Default OCR model (v6-small) not cached. Auto-initiating background download...');
-        handleStartDownload('v6-small', 'ocr').catch((err) => {
+        console.log(`[Offscreen] Default OCR model (${DEFAULT_OCR_TIER_ID}) not cached. Auto-initiating background download...`);
+        handleStartDownload(DEFAULT_OCR_TIER_ID, 'ocr').catch((err) => {
           console.warn('[Offscreen] Auto-download of default OCR model failed:', err);
         });
       } else {
-        console.log('[Offscreen] Default OCR model (v6-small) is already cached.');
+        console.log(`[Offscreen] Default OCR model (${DEFAULT_OCR_TIER_ID}) is already cached.`);
       }
     })
     .catch((err) => {

@@ -111,3 +111,17 @@ describe('extractPolygons corner ordering', () => {
     expect(maxXRatio).toBeGreaterThan(40);
   });
 });
+
+describe('extractPolygons per-tier boxThreshold override', () => {
+  it('keeps manga-threshold blobs (0.30) when boxThreshold=0.25 and drops them under defaults', () => {
+    const horizontal = makeBlobMap(20, 20, 24, 10, 0.30);
+    expect(extractPolygons(horizontal, MAP_W, MAP_H, MAP_W, MAP_H, 0.15, 1.5)).toHaveLength(0);
+    expect(extractPolygons(horizontal, MAP_W, MAP_H, MAP_W, MAP_H, 0.15, 1.5, undefined, 0.25)).toHaveLength(1);
+
+    // Tall vertical column (scaled long side >= 100px, aspect >= 1.25): must also honor 0.25
+    // rather than tightening to the 0.35 vertical fallback.
+    const vertical = makeBlobMap(20, 4, 8, 40, 0.30);
+    expect(extractPolygons(vertical, MAP_W, MAP_H, 256, 256, 0.15, 1.5, 0.25)).toHaveLength(0);
+    expect(extractPolygons(vertical, MAP_W, MAP_H, 256, 256, 0.15, 1.5, 0.25, 0.25)).toHaveLength(1);
+  });
+});

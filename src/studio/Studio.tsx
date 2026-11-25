@@ -30,6 +30,7 @@ import {
 } from 'lucide-react';
 import { db } from '../db';
 import { ensureFontsRegistered } from '../shared/fontLibrary';
+import { DEFAULT_OCR_TIER_ID } from '../shared/ocrTiers';
 import { studioStore, useStudioStore } from './state/studioStore';
 import { studioUndoStack } from './state/undoStack';
 import { requestStudioOcr, requestStudioColorize } from './bridge/offscreenStudioBridge';
@@ -639,7 +640,7 @@ export const Studio: React.FC<StudioProps> = ({
       if (jobId) {
         try {
           const retranslateDuration = Math.round(performance.now() - retranslateStart);
-          const currentOcrId = studioStore.getState().selectedOcrEngineId || 'v6-small';
+          const currentOcrId = studioStore.getState().selectedOcrEngineId || DEFAULT_OCR_TIER_ID;
           const currentInpaintId = studioStore.getState().selectedInpaintEngineId || 'lama-manga';
           const currentTranslationId = studioStore.getState().selectedTranslationEngineId || 'gg-translate';
 

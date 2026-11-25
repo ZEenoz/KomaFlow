@@ -1,13 +1,26 @@
 import { extractPolygons, type Point2D } from './extractPolygons';
 import { prepareHighQualityDetectionCanvas } from './DetectionResize';
 
+/** DBNet binarization threshold used when a tier and the service specify none (PaddleOCR default). */
+export const DEFAULT_DETECTION_THRESHOLD = 0.3;
+
 /**
  * DBNet polygon expansion factor (PaddleOCR `--det_db_unclip_ratio`). Controls how far the
  * raw segmentation contour is pushed outward via a Clipper polygon offset before becoming
  * the final box — 1.8 ensures anti-aliased character edges and kanji radicals are swallowed
  * without truncating at the quad boundary.
  */
-const UNCLIP_RATIO = 1.8;
+export const DEFAULT_UNCLIP_RATIO = 1.8;
+
+/** Per-tier DBNet post-processing overrides; omitted fields keep the defaults above. */
+export interface DetectionPostProcessingOptions {
+  /** DBNet binarization threshold for this tier. */
+  detectionThreshold?: number;
+  /** DBNet polygon expansion factor for this tier. */
+  unclipRatio?: number;
+  /** DBNet mean box-score gate for this tier. */
+  boxThreshold?: number;
+}
 
 export interface DetectionOutput {
   /** 4-point text quadrilaterals in original image coordinates. */
@@ -24,14 +37,17 @@ export interface DetectionOutput {
  */
 export class CustomPaddleDetector {
   private service: any; // PaddleOcrService instance
+  private postProcessing: DetectionPostProcessingOptions;
 
   /**
    * Constructs a new CustomPaddleDetector instance.
    *
    * @param service - An initialized PaddleOcrService instance.
+   * @param postProcessing - Optional per-tier DBNet threshold and unclip overrides.
    */
-  constructor(service: any) {
+  constructor(service: any, postProcessing: DetectionPostProcessingOptions = {}) {
     this.service = service;
+    this.postProcessing = postProcessing;
   }
 
   /**
@@ -81,7 +97,10 @@ export class CustomPaddleDetector {
     let probabilityMap: Float32Array | null = null;
     try {
       inputTensor = new platform.ort.Tensor('float32', input.tensor, [1, 3, input.height, input.width]);
-      results = await detector.session.run({ x: inputTensor });
+      // Custom exports name the image input differently (`images`, `input`, ...), so feed the
+      // session-declared first input instead of assuming the dependency's `x`.
+      const inputName = detector.session.inputNames?.[0] || 'x';
+      results = await detector.session.run({ [inputName]: inputTensor });
       const outKey = detector.session.outputNames?.[0] || 'sigmoid_0.tmp_0';
       const outputTensor = results[outKey] || Object.values(results)[0];
       if (outputTensor?.data) {
@@ -101,7 +120,10 @@ export class CustomPaddleDetector {
       return { polygons: [], scores: [] };
     }
 
-    const thresh = this.service.options.detection?.probabilityThreshold ?? 0.3;
+    const thresh = this.postProcessing.detectionThreshold
+      ?? this.service.options.detection?.probabilityThreshold
+      ?? DEFAULT_DETECTION_THRESHOLD;
+    const unclipRatio = this.postProcessing.unclipRatio ?? DEFAULT_UNCLIP_RATIO;
 
     // 3. Post-process the raw tensor map using our pure JS polygon extractor
     console.log('[CustomPaddleDetector] Extracting oriented polygons from probability map...');
@@ -112,8 +134,9 @@ export class CustomPaddleDetector {
       detectionInput.originalWidth,
       detectionInput.originalHeight,
       thresh,
-      UNCLIP_RATIO,
-      detectionInput.resizeRatio
+      unclipRatio,
+      detectionInput.resizeRatio,
+      this.postProcessing.boxThreshold
     );
 
     const polygons = detected.map(d => d.points);

@@ -288,8 +288,8 @@ KomaFlow Studio คือตัวแก้ไขเต็มจอสำหร�
 | องค์ประกอบ | ตัวเลือก | การทำงาน | หมายเหตุ |
 | :--- | :--- | :--- | :--- |
 | **Translation** | **Google Translate** (ค่าเริ่มต้น), **Cloud Shared Pool**, **WebLLM**, **Custom API** | ในเครื่องหรือคลาวด์ตามเอนจิน | เฉพาะบทสนทนาที่สกัดได้และการตั้งค่าคำขอที่กำหนดไว้เท่านั้นที่ออกจากเบราว์เซอร์ และเฉพาะเอนจินคลาวด์ ไม่มีการส่งภาพ |
-| **Inpainting** | None (Bypass), Simple Fill, Precise Fill, Telea Diffusion, LaMa Manga, AOT-GAN | ในเครื่อง | วิธี built-in 4 แบบและโมเดล neural 2 ตัว (~50 MB และ ~60 MB) |
-| **OCR** | PaddleOCR 10 พรีเซ็ต: v6-small (ค่าเริ่มต้น), v6-medium, v6-tiny, v5-mobile, v5-server, v5-en-mobile, v4-mobile, v4-server, v3-mobile, v3-japanese-mobile | ในเครื่อง | ใช้ WebGPU และถอยไปใช้ WASM ได้ พร้อมแบ่งภาพแบบ 1 มิติสำหรับเว็บตูนที่สูงมาก |
+| **Inpainting** | None (Bypass), Simple Fill, Precise Fill, Telea Diffusion, LaMa Manga, AOT-GAN | ในเครื่อง | วิธี built-in 4 แบบและโมเดล neural 2 ตัว (~197 MB และ ~23 MB) |
+| **OCR** | PaddleOCR 9 พรีเซ็ต: v6-small (ค่าเริ่มต้น), v6-manga, v6-medium, v6-tiny, v5-mobile, v5-server, v5-en-mobile, v5-ko-mobile, v5-th-mobile | ในเครื่อง | ใช้ WebGPU และถอยไปใช้ WASM ได้ พร้อมแบ่งภาพแบบ 1 มิติสำหรับเว็บตูนที่สูงมาก |
 | **Bubble Fit** | Disabled, Heuristic, YOLO (AI) | ในเครื่อง | โหมดจริงคือ `off`, `heuristic` และ `neural` ส่วน MST เป็นเรขาคณิตภายในขั้นตอนจัดกลุ่ม ไม่ใช่โหมดที่เลือกได้เป็นตัวที่สาม YOLO ใช้โมเดลเพิ่ม ~11 MB |
 | **Color-Bubble** | ตรวจจับสีข้อความรายฟอง + จับคู่สีฟอนต์ + wrap ในฟอง; Manga Colorizer แบบเลือกได้ | ในเครื่อง | การตรวจจับสีข้อความใช้ canvas/K-Means ส่วน colorizer SEResNeXt U-Net แบบเลือกได้ใช้ ~61 MB |
 
@@ -297,7 +297,7 @@ KomaFlow Studio คือตัวแก้ไขเต็มจอสำหร�
 
 - **Google Translate (`gg-translate`, ค่าเริ่มต้น):** ใช้ปลายทาง GTX สาธารณะโดยไม่ต้องใช้ API key คำขอถูกแบ่งชุดด้วยเพดาน 1,800 ตัวอักษรและหมดเวลาแต่ละครั้งที่ 8 วินาที สะดวกและไม่มีค่าใช้จ่าย แต่เป็นปลายทางที่ไม่เป็นทางการ ความพร้อมใช้งาน อัตราจำกัด และคุณภาพผลลัพธ์ขึ้นอยู่กับ Google ไม่ใช่ KomaFlow
 - **Cloud Shared Pool:** บริการ Cloudflare Worker พร้อม Google OAuth แบบเลือกได้ โควตาคือ **แปลสำเร็จ 100 ครั้งในหน้าต่าง 24 ชั่วโมงที่นับจากครั้งแรกที่คุณแปล** (หน้าต่างไม่เลื่อนตามแต่ละคำขอ), **จำนวนครั้งที่พยายาม 250 ครั้งต่อวัน** และเพดานรับคำขอรวมทั้งระบบ **10,000 ครั้งต่อวัน** เหมาะกับการใช้เป็นครั้งคราวและอาจส่งต่อไปยังโมเดลที่ชุมชนโฮสต์ไว้
-- **WebLLM:** รันโมเดลแปลแบบ open-weight ในเครื่องบน WebGPU รายการโมเดลที่มาพร้อมส่วนขยายมี **59 โมเดล** จากตระกูล Qwen 3.5/3/2.5/2, Gemma 2/3/4, Llama 3.1/3.2, Phi-3.5/4, Mistral/Ministral และ LFM2.5 ดาวน์โหลดโมเดลครั้งเดียวแล้วใช้งานออฟไลน์ได้ ขึ้นกับหน่วยความจำ GPU และ context window ของโมเดล
+- **WebLLM:** รันโมเดลแปลแบบ open-weight ในเครื่องบน WebGPU รายการโมเดลที่มาพร้อมส่วนขยายมี **23 โมเดล** จากตระกูล Qwen 3.5/3, Gemma 3/4, Phi-4, Ministral และ LFM2.5 ดาวน์โหลดโมเดลครั้งเดียวแล้วใช้งานออฟไลน์ได้ ขึ้นกับหน่วยความจำ GPU และ context window ของโมเดล
 - **Custom API:** รองรับผู้ให้บริการ `openai`, `openai-compatible`, `gemini` และ `claude` โดย `openai-compatible` ครอบคลุม Ollama, vLLM, LM Studio และปลายทางที่คล้ายกันในเครื่อง API key และ endpoint เก็บในพื้นที่เก็บข้อมูลของส่วนขยาย และคำขอส่งตรงไปยังผู้ให้บริการที่คุณตั้งค่า
 
 เชนเอนจินสำรอง (fallback chain) ปรับได้และว่างเปล่าโดยค่าเริ่มต้น หากเอนจินที่เลือกทำงานล้มเหลว KomaFlow จะไม่เปลี่ยนเส้นทางเงียบ ๆ เว้นแต่คุณจะเพิ่มเอนจินสำรองในการตั้งค่า
@@ -310,8 +310,8 @@ KomaFlow Studio คือตัวแก้ไขเต็มจอสำหร�
 | `simple` | Simple Fill | Fast Color | Built-in |
 | `stroke-fill` | Precise Fill | Text Stroke | Built-in |
 | `telea` | Telea Diffusion | Fast Diffusion | Built-in |
-| `lama-manga` | LaMa Manga | Neural Dynamic | ~50 MB |
-| `aotgan` | AOT-GAN | Neural High-Detail | ~60 MB |
+| `lama-manga` | LaMa Manga | Neural Dynamic | ~197 MB |
+| `aotgan` | AOT-GAN | Neural High-Detail | ~23 MB |
 
 ### หมายเหตุด้านประสิทธิภาพ
 

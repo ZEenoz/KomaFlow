@@ -1,6 +1,7 @@
 import type { IOcrEngine, OcrResult, PreparedPageLine } from '../engines/ocr/BaseOcrEngine';
 import { PaddleOcrEngine } from '../engines/ocr/PaddleOcrEngine';
 import { resolveOcrTier } from '../engines/ocr/ocrRegistry';
+import { DEFAULT_OCR_TIER_ID } from '../../shared/ocrTiers';
 import type { Point2D } from '../../shared/utils/geometry';
 import { Quadrilateral, Graph, calculateBoundingBox, computeMinAreaRect, polygonArea, quadrilateralCanMergeRegion, splitTextRegion, calculateBoxTiltDegrees } from '../../shared/utils/geometry';
 import { clusterLinesIntoUtterances } from '../utils/utteranceSplitter';
@@ -1359,7 +1360,7 @@ export class OcrManager {
    */
   async processImage(
     imageBuffer: ArrayBuffer,
-    tier: OcrTier = 'v6-small',
+    tier: OcrTier = DEFAULT_OCR_TIER_ID,
     context?: { sourceLang?: string; pageWidth?: number; pageHeight?: number; sfxPolicy?: SfxPolicyId },
     onInitialization?: InitializationLifecycleCallback,
     options?: { partitionLines?: (lines: PreparedPageLine[]) => Promise<number[]> },

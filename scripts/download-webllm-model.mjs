@@ -16,7 +16,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // Smallest model in the app's WebLLM registry (src/shared/models-registry.json) --
 // picked so the download/debug loop stays fast.
-const DEFAULT_MODEL_ID = 'SmolLM2-135M-Instruct-q0f16-MLC';
+const DEFAULT_MODEL_ID = 'gemma3-1b-it-q4f16_1-MLC';
 const HF_REPO = `mlc-ai/${process.argv[2] || DEFAULT_MODEL_ID}`;
 
 async function main() {

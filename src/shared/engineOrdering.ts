@@ -32,7 +32,7 @@ export interface RecommendedTranslationModel {
 }
 
 /**
- * Curated WebLLM translation models, three per size tier, ordered best-first.
+ * Curated WebLLM translation models, two or three per size tier, ordered best-first.
  *
  * All ids exist in `src/shared/models-registry.json` (and therefore in the
  * bundled `@mlc-ai/web-llm` prebuilt catalog). Selection is based on published
@@ -49,16 +49,16 @@ export interface RecommendedTranslationModel {
  *   included (English, Arabic, Chinese, French, German, Japanese, Korean,
  *   Spanish), so it is the best cheap option for manga translation.
  *
- * Known-but-rejected: Llama 3.1/3.2 (8 official languages), Mistral 7B v0.3
- * (English-centric), Phi-3.5/4-mini (strong reasoning, narrower multilingual
+ * Known-but-rejected: Phi-4-mini (strong reasoning, narrower multilingual
  * coverage), Ministral 3 3B (good multilingual MMLU, no WMT24++ figure or
  * CJK-strong claim), MiniCPM5-2B (English/Chinese only; multilingual stress
  * tests produced fabricated translations), SmolLM3-3B (six European languages
  * only).
  *
- * The 70B Llama is deliberately NOT pinned: at ~31 GB VRAM it is a "super
- * big" tier that cannot run on typical machines, so it stays in the
- * alphabetical not-installed tail.
+ * Not pinned yet: `gemma-4-E2B-it-q4f16_1-MLC` is in the registry and awaits a
+ * real-browser `npm run gate:translation` benchmark; `LFM3-1.7B` is tracked
+ * pending `@mlc-ai/web-llm` prebuilt catalog support. Neither id belongs in
+ * this list until that evidence or support exists.
  */
 export const RECOMMENDED_TRANSLATION_MODEL_ENTRIES: readonly RecommendedTranslationModel[] = [
   {
@@ -100,11 +100,6 @@ export const RECOMMENDED_TRANSLATION_MODEL_ENTRIES: readonly RecommendedTranslat
     id: 'Qwen3-8B-q4f16_1-MLC',
     tier: 'big',
     rationale: 'Proven 119-language alternative when Qwen3.5 is unavailable.',
-  },
-  {
-    id: 'Qwen2.5-7B-Instruct-q4f16_1-MLC',
-    tier: 'big',
-    rationale: 'Older but strong 29-language translator; widely validated in practice.',
   },
 ];
 

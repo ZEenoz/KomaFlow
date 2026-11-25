@@ -288,8 +288,8 @@ The Popup keeps the everyday controls in one place: enable/disable, source and t
 | Component | Available options | Execution | Notes |
 | :--- | :--- | :--- | :--- |
 | **Translation** | **Google Translate** (default), **Cloud Shared Pool**, **WebLLM**, **Custom API** | Local or cloud, per engine | Only extracted dialogue and the configured request settings leave the browser, and only for cloud engines. Images are never sent. |
-| **Inpainting** | None (Bypass), Simple Fill, Precise Fill, Telea Diffusion, LaMa Manga, AOT-GAN | Local | Four built-in methods plus two neural models (~50 MB and ~60 MB). |
-| **OCR** | 10 PaddleOCR presets: v6-small (default), v6-medium, v6-tiny, v5-mobile, v5-server, v5-en-mobile, v4-mobile, v4-server, v3-mobile, v3-japanese-mobile | Local | WebGPU with a WASM fallback; automatic 1D tiling for very tall webtoons. |
+| **Inpainting** | None (Bypass), Simple Fill, Precise Fill, Telea Diffusion, LaMa Manga, AOT-GAN | Local | Four built-in methods plus two neural models (~197 MB and ~23 MB). |
+| **OCR** | 9 PaddleOCR presets: v6-small (default), v6-manga, v6-medium, v6-tiny, v5-mobile, v5-server, v5-en-mobile, v5-ko-mobile, v5-th-mobile | Local | WebGPU with a WASM fallback; automatic 1D tiling for very tall webtoons. |
 | **Bubble Fit** | Disabled, Heuristic, YOLO (AI) | Local | `off`, `heuristic`, and `neural` are the real modes. MST is internal grouping geometry, not a third selectable mode. YOLO adds an ~11 MB model. |
 | **Color-Bubble** | Per-bubble text color detection + font color match + balloon wrap; optional Manga Colorizer | Local | Text color detection is canvas/K-Means based; the optional SEResNeXt U-Net colorizer is ~61 MB. |
 
@@ -297,7 +297,7 @@ The Popup keeps the everyday controls in one place: enable/disable, source and t
 
 - **Google Translate (`gg-translate`, default):** uses the public GTX endpoint with no API key. Requests are batched with a 1,800-character cap and an 8-second attempt timeout. It is convenient and free, but it is an unofficial endpoint and availability, rate limits, and output quality are controlled by Google, not by KomaFlow.
 - **Cloud Shared Pool:** a Cloudflare Worker service with optional Google OAuth. The quota is **100 successful translations per 24-hour window that starts at your first translation** (it does not slide with each request), **250 attempts per day**, and a global admission cap of **10,000 requests per day**. It is intended for occasional use and can route through community-hosted models.
-- **WebLLM:** runs open-weight translation models locally on WebGPU. The bundled registry contains **59 models** across Qwen 3.5/3/2.5/2, Gemma 2/3/4, Llama 3.1/3.2, Phi-3.5/4, Mistral/Ministral, and LFM2.5. The model downloads once and then works offline, subject to GPU memory and the model's context window.
+- **WebLLM:** runs open-weight translation models locally on WebGPU. The bundled registry contains **23 models** across Qwen 3.5/3, Gemma 3/4, Phi-4, Ministral, and LFM2.5. The model downloads once and then works offline, subject to GPU memory and the model's context window.
 - **Custom API:** supports `openai`, `openai-compatible`, `gemini`, and `claude` providers. `openai-compatible` covers local Ollama, vLLM, LM Studio, and similar endpoints. Keys and endpoints are stored in local extension storage; requests go directly to the provider you configure.
 
 The fallback chain is user-configurable and empty by default. If the selected engine fails, KomaFlow does not silently reroute unless you add fallback engines in Settings.
@@ -310,8 +310,8 @@ The fallback chain is user-configurable and empty by default. If the selected en
 | `simple` | Simple Fill | Fast Color | Built-in |
 | `stroke-fill` | Precise Fill | Text Stroke | Built-in |
 | `telea` | Telea Diffusion | Fast Diffusion | Built-in |
-| `lama-manga` | LaMa Manga | Neural Dynamic | ~50 MB |
-| `aotgan` | AOT-GAN | Neural High-Detail | ~60 MB |
+| `lama-manga` | LaMa Manga | Neural Dynamic | ~197 MB |
+| `aotgan` | AOT-GAN | Neural High-Detail | ~23 MB |
 
 ### Performance notes
 

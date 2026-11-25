@@ -73,7 +73,7 @@ describe('handleCheckStatus model routing', () => {
     vi.mocked(hasModelInCache).mockResolvedValue(false);
     vi.mocked(OcrCacheManager.isModelCached).mockResolvedValue(true); // v6-small is cached
 
-    const webLlmModelId = 'Llama-3.2-1B-Instruct-q4f16_1-MLC';
+    const webLlmModelId = 'Qwen3.5-0.8B-q4f16_1-MLC';
     const result = await checkStatus(webLlmModelId);
 
     expect(result).toBe(false);
@@ -87,11 +87,11 @@ describe('handleCheckStatus model routing', () => {
     vi.mocked(InpaintCacheManager.isModelCached).mockResolvedValue(false);
     vi.mocked(hasModelInCache).mockResolvedValue(false);
 
-    const llamaStatus = await checkStatus('Llama-3.2-1B-Instruct-q0f16-MLC');
+    const webLlmStatus = await checkStatus('LFM2.5-1.2B-Instruct-q4f16_1-MLC');
     const lamaInpaintStatus = await checkStatus('lama-manga');
     const ocrStatus = await checkStatus('v6-small');
 
-    expect(llamaStatus).toBe(false);
+    expect(webLlmStatus).toBe(false);
     expect(lamaInpaintStatus).toBe(false);
     expect(ocrStatus).toBe(true);
   });

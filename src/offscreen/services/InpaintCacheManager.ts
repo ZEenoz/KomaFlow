@@ -44,9 +44,9 @@ export class InpaintCacheManager {
   }
 
   /**
-   * Downloads a model and streams progress back via the provided callback.
+   * Downloads a model and streams monotonic progress back via the provided callback.
    * @param modelUrl The full URL to the ONNX model or data file.
-   * @param progressCallback Callback with progress from 0 to 1.
+   * @param progressCallback Callback with monotonic progress from 0 to 1.
    */
   static async downloadModelWithProgress(
     modelUrl: string,
@@ -86,7 +86,7 @@ export class InpaintCacheManager {
             break;
           }
           loaded += value.length;
-          progressCallback(loaded / total);
+          progressCallback(Math.min(1, loaded / total));
           controller.enqueue(value);
         }
       }
@@ -99,5 +99,6 @@ export class InpaintCacheManager {
     });
 
     await cache.put(modelUrl, newResponse);
+    progressCallback(1);
   }
 }

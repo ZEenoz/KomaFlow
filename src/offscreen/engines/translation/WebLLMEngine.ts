@@ -54,7 +54,7 @@ export const WEBLLM_PRESENCE_PENALTY = 1.5;
 /**
  * KV window requested at load, in tokens.
  *
- * The catalogue pins 4096 on 53 of the 59 records we ship, while this engine's planner refuses to
+ * The catalogue pins 4096 on all 23 records we ship, while this engine's planner refuses to
  * exceed `maxContextWindow = 1024`, so a default load reserves 4x the slots it can ever use. Half of
  * that is still 2x slack over the planner: the planner's input budget is a character-weighted
  * estimate, and the window is a hard ceiling — a prompt that crosses it throws
