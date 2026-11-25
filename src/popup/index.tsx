@@ -5,11 +5,16 @@ import '../index.css';
 import EngineDropdown from './components/EngineDropdown';
 import SettingsView from './components/SettingsView';
 import BatchScanPanel from './components/BatchScanPanel';
+import HomeActiveStackCard from './components/HomeActiveStackCard';
+import HomePresetBar from './components/HomePresetBar';
+import HomeLivePulse from './components/HomeLivePulse';
+import HomeQuickActions from './components/HomeQuickActions';
 
-import { Settings, Home, Power, Crop, Globe, Layers, Sun, Moon } from 'lucide-react';
+import { Settings, Home, Power, Globe, Layers, Sun, Moon } from 'lucide-react';
 
 import type { PopupState } from '../shared/types';
 import { DEFAULT_POPUP_STATE } from '../shared/types';
+import { createDefaultPipelinePresets } from '../shared/pipelinePresets';
 import { STORAGE_KEYS } from '../shared/constants';
 import { isDomainDisabled, normalizeDomain } from '../shared/siteRules';
 
@@ -27,6 +32,7 @@ export function completePopupState(state?: Partial<PopupState>): PopupState {
       ...DEFAULT_POPUP_STATE.webgpuOverrides,
       ...(state?.webgpuOverrides ?? {}),
     },
+    presets: state?.presets ?? createDefaultPipelinePresets(),
   };
 }
 
@@ -272,30 +278,21 @@ function PopupApp() {
           {activeTab === 'home' ? (
             <div className="flex flex-col gap-3">
               <EngineDropdown state={state} updateState={updateState} />
-
-              <div className="flex flex-col gap-2 pt-2 border-t border-[var(--color-dust)] border-opacity-30">
-                <button
-                  onClick={async () => {
-                    try {
-                      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-                      if (tab?.id) {
-                        await chrome.tabs.sendMessage(tab.id, { type: 'START_AREA_SELECTION' });
-                        window.close();
-                      }
-                    } catch (err) {
-                      console.warn('[Popup] Failed to start area selection on active tab:', err);
-                    }
-                  }}
-                  className="w-full py-2 bg-[var(--color-vellum)] text-[var(--color-ink)] border border-[var(--color-dust)] border-opacity-30 font-semibold rounded hover:border-[var(--color-editorial)] hover:text-[var(--color-editorial)] transition-colors flex items-center justify-center gap-2 cursor-pointer text-sm"
-                  title="Drag a rectangle across any on-screen manga panel, canvas, or video to translate it"
-                >
-                  <Crop size={16} />
-                  Crop & Translate Area
-                </button>
-              </div>
+              <HomeActiveStackCard
+                state={state}
+                updateState={updateState}
+                onOpenSettings={() => setActiveTab('settings')}
+              />
+              <HomePresetBar
+                state={state}
+                updateState={updateState}
+                onOpenSettings={() => setActiveTab('settings')}
+              />
+              <HomeLivePulse onOpenBatch={() => setActiveTab('batch')} />
+              <HomeQuickActions onOpenBatch={() => setActiveTab('batch')} />
             </div>
           ) : activeTab === 'batch' ? (
-            <BatchScanPanel />
+            <BatchScanPanel state={state} updateState={updateState} />
           ) : (
             <SettingsView state={state} updateState={updateState} />
           )}

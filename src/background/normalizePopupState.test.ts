@@ -20,6 +20,7 @@ vi.hoisted(() => {
 
 import type { PopupState } from '../shared/types';
 import { DEFAULT_POPUP_STATE } from '../shared/types';
+import { DEFAULT_PIPELINE_PRESETS, MAX_PIPELINE_PRESETS, MAX_PRESET_NAME_LENGTH } from '../shared/pipelinePresets';
 import { normalizePopupState } from './index';
 
 describe('normalizePopupState', () => {
@@ -75,6 +76,20 @@ describe('normalizePopupState', () => {
     const result = normalizePopupState(validState);
     expect(result.changed).toBe(false);
     expect(result.state.renderFontPresetId).toBe('comic');
+  });
+
+  it('falls back when a stored active model was pruned from the registry', () => {
+    const saved: PopupState = {
+      ...DEFAULT_POPUP_STATE,
+      activeEngineId: 'removed-legacy-webllm-model',
+      fallbackChain: ['removed-legacy-webllm-model', 'Qwen3.5-0.8B-q4f16_1-MLC'],
+    };
+
+    const result = normalizePopupState(saved);
+
+    expect(result.changed).toBe(true);
+    expect(result.state.activeEngineId).toBe(DEFAULT_POPUP_STATE.activeEngineId);
+    expect(result.state.fallbackChain).toEqual(['Qwen3.5-0.8B-q4f16_1-MLC']);
   });
 
   it('normalizes missing or invalid bubbleMode to off', () => {
@@ -214,5 +229,89 @@ describe('normalizePopupState', () => {
     });
 
     expect(result.state.customApis[0].customPrompt).toHaveLength(4000);
+  });
+
+  it('upgrades legacy state without presets to the starter presets', () => {
+    const { presets: _presets, ...legacyState } = DEFAULT_POPUP_STATE;
+    const result = normalizePopupState(legacyState);
+
+    expect(result.state.presets).toEqual(DEFAULT_PIPELINE_PRESETS);
+    expect(result.changed).toBe(true);
+  });
+
+  it('preserves an explicitly cleared preset list', () => {
+    const clearedState: PopupState = { ...DEFAULT_POPUP_STATE, presets: [] };
+    const result = normalizePopupState(clearedState);
+
+    expect(result.state.presets).toEqual([]);
+    expect(result.changed).toBe(false);
+  });
+
+  it('normalizes preset fields, names, duplicate ids and the preset cap', () => {
+    const validPreset = DEFAULT_PIPELINE_PRESETS[0];
+    const saved = {
+      ...DEFAULT_POPUP_STATE,
+      presets: [
+        {
+          id: '  custom  ',
+          name: `  ${'x'.repeat(MAX_PRESET_NAME_LENGTH + 10)}  `,
+          activeEngineId: 'removed-engine',
+          activeInpaintId: 'removed-inpaint',
+          activeColorId: 'removed-color',
+          activeOcrId: 'removed-ocr',
+          bubbleMode: 'removed-mode',
+          renderFontPresetId: 'removed-font',
+        },
+        validPreset,
+        { ...validPreset, name: 'Duplicate' },
+        ...Array.from({ length: MAX_PIPELINE_PRESETS }, (_, index) => ({
+          ...validPreset,
+          id: `extra-${index}`,
+        })),
+      ],
+    } as unknown as PopupState;
+
+    const result = normalizePopupState(saved);
+
+    expect(result.state.presets).toHaveLength(MAX_PIPELINE_PRESETS);
+    expect(result.state.presets?.[0]).toEqual({
+      id: 'custom',
+      name: 'x'.repeat(MAX_PRESET_NAME_LENGTH),
+      activeEngineId: DEFAULT_POPUP_STATE.activeEngineId,
+      activeInpaintId: DEFAULT_POPUP_STATE.activeInpaintId,
+      activeColorId: DEFAULT_POPUP_STATE.activeColorId,
+      activeOcrId: DEFAULT_POPUP_STATE.activeOcrId,
+      bubbleMode: 'off',
+      renderFontPresetId: 'standard',
+    });
+    expect(result.state.presets?.[1]).toEqual(validPreset);
+    expect(result.state.presets?.filter((preset) => preset.id === validPreset.id)).toHaveLength(1);
+    expect(result.changed).toBe(true);
+  });
+
+  it('falls back to starter presets when a stored preset list is not an array', () => {
+    const saved = { ...DEFAULT_POPUP_STATE, presets: 'broken' } as unknown as PopupState;
+    const result = normalizePopupState(saved);
+
+    expect(result.state.presets).toEqual(DEFAULT_PIPELINE_PRESETS);
+    expect(result.changed).toBe(true);
+  });
+
+  it('preserves saved Cloud Shared Pool presets after sign-out while falling back activeEngineId', () => {
+    const cloudPreset = {
+      ...DEFAULT_PIPELINE_PRESETS[1],
+      id: 'cloud-manga',
+      name: 'Cloud Manga',
+      activeEngineId: 'cloudflare-translate',
+    };
+    const result = normalizePopupState({
+      ...DEFAULT_POPUP_STATE,
+      userAccount: undefined,
+      activeEngineId: 'cloudflare-translate',
+      presets: [cloudPreset],
+    });
+
+    expect(result.state.activeEngineId).toBe(DEFAULT_POPUP_STATE.activeEngineId);
+    expect(result.state.presets?.[0].activeEngineId).toBe('cloudflare-translate');
   });
 });

@@ -9,8 +9,10 @@ import { normalizeCustomApiConfig } from '../shared/customApi';
 import { blobToDataUrl } from '../shared/utils/blobDataUrl';
 import { SUPPORTED_INPAINT_IDS } from '../shared/inpaintTiers';
 import { SUPPORTED_COLOR_IDS } from '../shared/colorTiers';
+import { DEFAULT_OCR_TIER_ID } from '../shared/ocrTiers';
 import { resolveOcrTier } from '../offscreen/engines/ocr/ocrRegistry';
 import { normalizeRenderFontPresetId } from '../shared/renderFontPresets';
+import { normalizePipelinePresets } from '../shared/pipelinePresets';
 import { normalizeGlossaryEntries } from '../shared/glossary';
 import { DEFAULT_SFX_POLICY, isSfxPolicyId, type SfxPolicyId } from '../shared/sfx/sfxPolicy';
 import { normalizeDisabledDomains, normalizeSiteRules, isDomainDisabled } from '../shared/siteRules';
@@ -155,6 +157,38 @@ export interface JobProgressBudget {
 }
 
 /**
+ * Migrates legacy inpainting aliases and rejects removed or unknown tier IDs.
+ *
+ * @param value - Raw persisted inpainting identifier.
+ * @returns Supported canonical inpainting identifier, or the popup default.
+ */
+function normalizeInpaintId(value: unknown): string {
+  const rawId = typeof value === 'string' ? value : '';
+  const canonicalId =
+    rawId === 'lama-base' || rawId === 'lama-manga-fast'
+      ? 'lama-manga'
+      : rawId === 'aot'
+        ? 'aotgan'
+        : rawId;
+  return SUPPORTED_INPAINT_IDS.has(canonicalId)
+    ? canonicalId
+    : DEFAULT_POPUP_STATE.activeInpaintId;
+}
+
+/**
+ * Normalizes persisted bubble detection modes, including the legacy `neural-mask` alias.
+ *
+ * @param value - Raw persisted bubble detection mode.
+ * @returns Supported bubble detection mode.
+ */
+function normalizeBubbleMode(value: unknown): BubbleDetectionMode {
+  if (value === 'heuristic' || value === 'neural') return value;
+  // Legacy 'neural-mask' selections behave identically to 'neural' since the YOLO
+  // tier unification; normalize at the storage boundary like other legacy values.
+  return value === 'neural-mask' ? 'neural' : 'off';
+}
+
+/**
  * Removes translation engines that are no longer supported from stored popup settings
  * and normalizes render font presets and history retention to allowlisted values.
  *
@@ -195,26 +229,28 @@ export function normalizePopupState(popupState: Partial<PopupState> | undefined)
   const fallbackChain = fallbackSource.filter((engineId, index, chain) =>
     engineId !== activeEngineId && isSupportedEngine(engineId) && chain.indexOf(engineId) === index
   );
-  const rawInpaintId = (completedState.activeInpaintId === 'lama-base' || completedState.activeInpaintId === 'lama-manga-fast')
-    ? 'lama-manga'
-    : (completedState.activeInpaintId === 'aot' ? 'aotgan' : completedState.activeInpaintId);
-  const activeInpaintId = SUPPORTED_INPAINT_IDS.has(rawInpaintId)
-    ? rawInpaintId
-    : DEFAULT_POPUP_STATE.activeInpaintId;
+  const activeInpaintId = normalizeInpaintId(completedState.activeInpaintId);
   const rawColorId = completedState.activeColorId;
   const activeColorId = rawColorId && SUPPORTED_COLOR_IDS.has(rawColorId)
     ? rawColorId
     : DEFAULT_POPUP_STATE.activeColorId;
   const activeOcrId = resolveOcrTier(completedState.activeOcrId);
   const renderFontPresetId = normalizeRenderFontPresetId(completedState.renderFontPresetId);
-  const bubbleMode: BubbleDetectionMode =
-    completedState.bubbleMode === 'heuristic' || completedState.bubbleMode === 'neural'
-      ? completedState.bubbleMode
-      : // Legacy 'neural-mask' selections behave identically to 'neural' since the YOLO
-        // tier unification; normalize at the storage boundary like other legacy values.
-        (completedState.bubbleMode as string) === 'neural-mask'
-        ? 'neural'
-        : 'off';
+  const bubbleMode = normalizeBubbleMode(completedState.bubbleMode);
+  const presets = normalizePipelinePresets(completedState.presets, {
+    // Preserve saved Cloud Shared Pool presets across temporary sign-out; HomePresetBar
+    // falls back to Google Translate at apply time with a sign-in hint instead of losing the preset.
+    normalizeEngineId: (value) => typeof value === 'string' && (value === 'cloudflare-translate' || isSupportedEngine(value))
+      ? value
+      : DEFAULT_POPUP_STATE.activeEngineId,
+    normalizeInpaintId,
+    normalizeColorId: (value) => typeof value === 'string' && SUPPORTED_COLOR_IDS.has(value)
+      ? value
+      : (DEFAULT_POPUP_STATE.activeColorId ?? 'none'),
+    normalizeOcrId: (value) => resolveOcrTier(typeof value === 'string' ? value : undefined),
+    normalizeBubbleMode,
+    normalizeRenderFontPresetId,
+  });
   const sfxPolicy: SfxPolicyId = isSfxPolicyId(completedState.sfxPolicy)
     ? completedState.sfxPolicy
     : DEFAULT_SFX_POLICY;
@@ -260,6 +296,7 @@ export function normalizePopupState(popupState: Partial<PopupState> | undefined)
     disabledDomains: normalizeDisabledDomains(completedState.disabledDomains),
     siteRules: normalizeSiteRules(completedState.siteRules),
     fallbackChain,
+    presets,
   };
   const changed = JSON.stringify(state) !== JSON.stringify(popupState ?? {});
 
@@ -478,10 +515,20 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         }
 
         console.log(`[Background] Received BATCH_QUEUE_TRANSLATIONS for ${urls.length} images.`);
+        // The panel sends the language it is displaying: a popup storage write can still be in flight
+        // when Translate is pressed right after changing Target, and the stored state would win that
+        // race. `force` comes from the panel's Retranslate action and skips stored-page restore.
+        const requestedTargetLang: string | undefined =
+          message.payload?.targetLang ?? popupState?.targetLang;
+        const force = message.payload?.force === true;
         const { queuedCount, rejectedUrls, restoredUrls, capacity } = await queueBatchTranslations(
           urls,
           targetTabId,
-          popupState?.targetLang
+          requestedTargetLang,
+          force
+        );
+        console.log(
+          `[Background] Batch queued ${queuedCount}/${urls.length} pages to ${requestedTargetLang ?? 'unknown'}${force ? ' (forced retranslate)' : ''}.`
         );
         if (restoredUrls.length > 0) {
           console.log(`[Background] Batch restored ${restoredUrls.length}/${urls.length} pages from storage (no new translation).`);
@@ -489,7 +536,15 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         if (rejectedUrls.length > 0) {
           console.warn(`[Background] Batch queue refused ${rejectedUrls.length}/${urls.length} pages (capacity ${capacity}).`);
         }
-        sendResponse({ status: 'success', queuedCount, rejectedUrls, restoredUrls, capacity, total: urls.length });
+        sendResponse({
+          status: 'success',
+          queuedCount,
+          rejectedUrls,
+          restoredUrls,
+          capacity,
+          total: urls.length,
+          targetLang: requestedTargetLang,
+        });
       }).catch((err) => {
         sendResponse({ status: 'error', error: err instanceof Error ? err.message : String(err) });
       });
@@ -740,7 +795,7 @@ chrome.runtime.onStartup.addListener(async () => {
     await sendMessageToOffscreen({ type: 'PRELOAD_ACTIVE_ENGINE' } as PreloadActiveEngineMessage);
     await sendMessageToOffscreen({
       type: 'START_MODEL_DOWNLOAD',
-      payload: { modelId: 'v6-small', category: 'ocr' }
+      payload: { modelId: DEFAULT_OCR_TIER_ID, category: 'ocr' }
     });
   } catch (error) {
     console.warn('[Background] Startup preload/download warning:', error);
@@ -755,7 +810,7 @@ chrome.runtime.onInstalled.addListener(async () => {
   try {
     await sendMessageToOffscreen({
       type: 'START_MODEL_DOWNLOAD',
-      payload: { modelId: 'v6-small', category: 'ocr' }
+      payload: { modelId: DEFAULT_OCR_TIER_ID, category: 'ocr' }
     });
     await sendMessageToOffscreen({ type: 'PRELOAD_ACTIVE_ENGINE' } as PreloadActiveEngineMessage);
   } catch (error) {
@@ -1073,19 +1128,22 @@ async function readPopupState(): Promise<PopupState | undefined> {
  * @param {string} srcUrl - The URL of the image to queue.
  * @param {number} [tabId] - The ID of the tab that requested the translation (for returning result).
  * @param {boolean} [isBatch=false] - Whether this is a batch queue from the chapter scanner.
+ * @param {string} [targetLang] - Language the requester is translating into; wins over the stored
+ *   popup state so the job row matches the language the user saw in the panel that queued it.
  * @returns {Promise<QueueAdmission>} Whether the URL was inserted, already in flight, or refused.
  */
 export async function queueTranslation(
   srcUrl: string,
   tabId?: number,
-  isBatch = false
+  isBatch = false,
+  targetLang?: string
 ): Promise<QueueAdmission> {
   // Guard against duplicate queueing if a job for this URL is currently in flight.
   // Only actively-running jobs may be treated as stale, and only after the same
   // no-progress window reclaimStaleJobs uses: a 'queued' job can legitimately wait
   // minutes behind an active job (e.g. a first-run model download), so bypassing it
-  // re-queued duplicates that each ran the full pipeline. Orphaned queued jobs are
-  // recovered by resetOrphanedInFlightJobs() at service-worker startup instead.
+  // re-queued duplicates that each ran the full pipeline. Orphaned queued jobs stay
+  // queued and are picked up by the next processQueue wake-up.
   const inFlightJob = srcUrl
     ? await db.translationJobs
         .where('srcUrl')
@@ -1126,7 +1184,7 @@ export async function queueTranslation(
     tabId: tabId,
     // Recorded so a reloaded page can be restored from its stored baked page instead of paying
     // for the same translation twice in the wrong language.
-    targetLang: popupState?.targetLang,
+    targetLang: targetLang ?? popupState?.targetLang,
   });
   
   // Kick off the queue processor
@@ -1144,8 +1202,10 @@ export async function queueTranslation(
  *
  * @param {string[]} urls - Image URLs to queue, in reading order.
  * @param {number} [tabId] - The tab that scanned the chapter, used for completion messages.
- * @param {string} [targetLang] - Language the popup is set to; stored pages baked for another
- *   language are re-translated instead of restored.
+ * @param {string} [targetLang] - Language the requester is translating into; stored pages baked for
+ *   another language are re-translated instead of restored.
+ * @param {boolean} [force=false] - Ignore stored pages and translate every URL again, which is what
+ *   the panel's Retranslate action needs when the artwork on screen is a previous run's output.
  * @returns {Promise<{ queuedCount: number; rejectedUrls: string[]; restoredUrls: string[]; capacity: number }>}
  *   How many URLs are now in the queue (duplicates already waiting count as admitted), the URLs the
  *   capacity guard refused, the URLs served from an already stored translation, and the batch
@@ -1154,7 +1214,8 @@ export async function queueTranslation(
 export async function queueBatchTranslations(
   urls: string[],
   tabId?: number,
-  targetLang?: string
+  targetLang?: string,
+  force = false
 ): Promise<{ queuedCount: number; rejectedUrls: string[]; restoredUrls: string[]; capacity: number }> {
   let queuedCount = 0;
   const rejectedUrls: string[] = [];
@@ -1162,13 +1223,13 @@ export async function queueBatchTranslations(
 
   for (const url of urls) {
     // Already translated: hand the stored page back instead of paying for the same pixels again.
-    if (await deliverStoredTranslation(url, tabId, targetLang)) {
+    if (!force && (await deliverStoredTranslation(url, tabId, targetLang))) {
       restoredUrls.push(url);
       continue;
     }
     let admission: QueueAdmission;
     try {
-      admission = await queueTranslation(url, tabId, true);
+      admission = await queueTranslation(url, tabId, true, targetLang);
     } catch (err) {
       console.warn(`[Background] Failed to queue batch image ${url}:`, err);
       rejectedUrls.push(url);
@@ -1439,19 +1500,22 @@ async function readBakedImageDataUrl(jobId: number): Promise<string | null> {
  * Finds the newest completed job for an image whose baked page can be handed back to the page.
  *
  * A reloaded chapter loses every in-page record of its translation, so without this the only way
- * back is paying for the same pages again. A page baked for a different target language is not
- * reused: showing Thai lettering to someone who now wants Vietnamese is worse than re-translating.
- * Jobs created before the language was recorded carry no `targetLang` and are reused as-is.
+ * back is paying for the same pages again. Reuse is language-exact: a page baked for a different
+ * target language is never handed back, and neither is a page whose row carries no `targetLang`
+ * (every job written before the language was recorded). Showing Thai lettering to someone who now
+ * wants Vietnamese is bad; worse is answering an English → Thai request with the English page the
+ * user just asked to replace, which is exactly what "reuse rows without a language" did.
  *
  * @param srcUrl - Image URL the page asked about.
- * @param targetLang - Language the popup is currently set to.
+ * @param targetLang - Language the popup is currently set to; undefined reuses nothing.
  * @returns Job id of a reusable translation, or null when nothing reusable is stored.
  */
 async function findStoredTranslation(srcUrl: string, targetLang?: string): Promise<number | null> {
+  if (!targetLang) return null;
   const jobs = await db.translationJobs.where('srcUrl').equals(srcUrl).toArray();
   const reusable = jobs
     .filter((job) => job.status === 'completed' && typeof job.id === 'number')
-    .filter((job) => job.targetLang === undefined || job.targetLang === targetLang)
+    .filter((job) => job.targetLang === targetLang)
     .sort((a, b) => (b.completedAt ?? b.timestamp) - (a.completedAt ?? a.timestamp));
   for (const job of reusable) {
     // Presence check only: `deliverRecoveredJob` does the expensive blob→data-URL conversion once.

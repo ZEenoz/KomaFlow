@@ -3,6 +3,10 @@
  */
 import { DEFAULT_SFX_POLICY, type SfxPolicyId } from './sfx/sfxPolicy';
 import { RENDER_FONT_MIN_SIZE_RANGE } from './constants';
+import { DEFAULT_OCR_TIER_ID } from './ocrTiers';
+import { createDefaultPipelinePresets, type PipelinePreset } from './pipelinePresets';
+
+export type { PipelinePreset } from './pipelinePresets';
 export type MessageType = 
   | 'TRANSLATE_IMAGE'    // Content -> Background
   | 'PROCESS_JOB'        // Background -> Offscreen (job queue dispatch)
@@ -289,6 +293,8 @@ export interface PopupState {
     color: boolean;
   };
   userAccount?: UserAccountInfo;
+  /** User-editable pipeline presets; absent in legacy state. */
+  presets?: PipelinePreset[];
 }
 
 export const DEFAULT_POPUP_STATE: PopupState = {
@@ -302,7 +308,7 @@ export const DEFAULT_POPUP_STATE: PopupState = {
   activeEngineId: 'gg-translate',
   activeInpaintId: 'telea',
   activeColorId: 'none',
-  activeOcrId: 'v6-small',
+  activeOcrId: DEFAULT_OCR_TIER_ID,
   renderFontPresetId: 'comic',
   renderFontBold: false,
   renderFontItalic: false,
@@ -327,5 +333,6 @@ export const DEFAULT_POPUP_STATE: PopupState = {
     ocr: true,
     bubble: true,
     color: true,
-  }
+  },
+  presets: createDefaultPipelinePresets(),
 };

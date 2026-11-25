@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { Download, ChevronDown, ChevronRight, Plus, Search, Check, Bold, Italic, AlignLeft, AlignCenter, AlignRight, Trash2 } from 'lucide-react';
-import type { PopupState, BubbleDetectionMode } from '../../shared/types';
+import type { PopupState } from '../../shared/types';
 import AddApiForm from './AddApiForm';
 import MiniSearch from 'minisearch';
 import { formatVramEstimate } from '../../shared/utils/formatVramEstimate';
@@ -10,41 +10,18 @@ import { normalizeRenderFontPresetId, CUSTOM_FONT_PREFIX } from '../../shared/re
 import { FontPickerDropdown, type FontSelection } from '../../shared/ui/FontPickerDropdown';
 import { INPAINT_TIER_CATALOG } from '../../shared/inpaintTiers';
 import { COLOR_TIER_CATALOG } from '../../shared/colorTiers';
+import { DEFAULT_OCR_TIER_ID, OCR_TIER_CATALOG } from '../../shared/ocrTiers';
 import {
   RECOMMENDED_TRANSLATION_MODELS,
   defaultGroupFor,
   orderEngines,
 } from '../../shared/engineOrdering';
 import HelpTooltip from './HelpTooltip';
+import { BUBBLE_MODE_OPTIONS } from '../../shared/bubbleModes';
 import { RENDER_FONT_MIN_SIZE_RANGE } from '../../shared/constants';
 
 export { RECOMMENDED_TRANSLATION_MODELS } from '../../shared/engineOrdering';
-
-export interface BubbleModeOption {
-  id: BubbleDetectionMode;
-  name: string;
-  tooltip: string;
-  isModel?: boolean;
-}
-
-export const BUBBLE_MODE_OPTIONS: BubbleModeOption[] = [
-  {
-    id: 'off',
-    name: 'Disabled',
-    tooltip: 'Tightly hugs source text lines without bubble expansion (Cotrans MST).',
-  },
-  {
-    id: 'heuristic',
-    name: 'Heuristic',
-    tooltip: 'Expands into white bubble whitespace with tail severing. Fast (<1ms), zero download.',
-  },
-  {
-    id: 'neural',
-    name: 'YOLO (AI)',
-    tooltip: 'Neural segmentation mask with morphological tail severing on AI contours (~11 MB).',
-    isModel: true,
-  },
-];
+export { BUBBLE_MODE_OPTIONS, type BubbleModeOption } from '../../shared/bubbleModes';
 
 interface DownloadAcknowledgement {
   status?: 'success' | 'error';
@@ -79,7 +56,7 @@ export interface Engine {
  *    the dropdown's default engine id.
  * 2. Installed: downloaded local models and custom APIs, alphabetical.
  * 3. Not installed: alphabetical, with the curated best-per-size translation
- *    models pinned first. The 70B model is super-big and is not pinned.
+ *    models pinned first.
  *
  * @param engines - Models to order after a download or custom API addition.
  * @param defaultId - The dropdown's default engine id.
@@ -317,7 +294,7 @@ export default function EngineSelectionPanel({ state, updateState }: EngineSelec
           setOcrBaseEngines(prev => prev.some(engine => engine.id === message.payload.modelId)
             ? orderChangedCatalog(
               prev.map(engine => engine.id === message.payload.modelId ? { ...engine, isDownloaded: true } : engine),
-              'v6-small'
+              DEFAULT_OCR_TIER_ID
             )
             : prev
           );
@@ -375,18 +352,15 @@ export default function EngineSelectionPanel({ state, updateState }: EngineSelec
   );
 
   const [ocrBaseEngines, setOcrBaseEngines] = useState<Engine[]>(() =>
-    orderChangedCatalog([
-      { id: 'v6-small', name: 'PaddleOCR v6 Small (Default)', type: 'local', isDownloaded: false },
-      { id: 'v6-medium', name: 'PaddleOCR v6 Medium', type: 'local', isDownloaded: false },
-      { id: 'v6-tiny', name: 'PaddleOCR v6 Tiny', type: 'local', isDownloaded: false },
-      { id: 'v5-mobile', name: 'PaddleOCR v5 Mobile', type: 'local', isDownloaded: false },
-      { id: 'v5-server', name: 'PaddleOCR v5 Server', type: 'local', isDownloaded: false },
-      { id: 'v5-en-mobile', name: 'PaddleOCR v5 English Mobile', type: 'local', isDownloaded: false },
-      { id: 'v4-mobile', name: 'PaddleOCR v4 Mobile', type: 'local', isDownloaded: false },
-      { id: 'v4-server', name: 'PaddleOCR v4 Server', type: 'local', isDownloaded: false },
-      { id: 'v3-mobile', name: 'PaddleOCR v3 Mobile', type: 'local', isDownloaded: false },
-      { id: 'v3-japanese-mobile', name: 'PaddleOCR v3 Japanese Mobile', type: 'local', isDownloaded: false },
-    ], 'v6-small'),
+    orderChangedCatalog(
+      OCR_TIER_CATALOG.map((tier) => ({
+        id: tier.id,
+        name: tier.name,
+        type: 'local' as const,
+        isDownloaded: false,
+      })),
+      DEFAULT_OCR_TIER_ID,
+    ),
   );
 
   const [baseEngines, setBaseEngines] = useState<Engine[]>([]);
@@ -437,7 +411,7 @@ export default function EngineSelectionPanel({ state, updateState }: EngineSelec
         const hydratedTranslation = orderChangedCatalog(hydrate(engines), 'gg-translate');
         const hydratedInpaint = orderChangedCatalog(hydrate(inpaintBaseEnginesRef.current), 'simple');
         const hydratedColor = orderChangedCatalog(hydrate(colorBaseEnginesRef.current), 'none');
-        const hydratedOcr = orderChangedCatalog(hydrate(ocrBaseEnginesRef.current), 'v6-small');
+        const hydratedOcr = orderChangedCatalog(hydrate(ocrBaseEnginesRef.current), DEFAULT_OCR_TIER_ID);
         setBaseEngines(hydratedTranslation);
         setInpaintBaseEngines(hydratedInpaint);
         setColorBaseEngines(hydratedColor);
@@ -450,7 +424,7 @@ export default function EngineSelectionPanel({ state, updateState }: EngineSelec
         const inpaintUnavailable = Boolean(selectedInpaint && !selectedInpaint.isDownloaded);
         const selectedColor = hydratedColor.find((engine) => engine.id === (currentState.activeColorId || 'none'));
         const colorUnavailable = Boolean(selectedColor && !selectedColor.isDownloaded);
-        const selectedOcr = hydratedOcr.find((engine) => engine.id === (currentState.activeOcrId || 'v6-small'));
+        const selectedOcr = hydratedOcr.find((engine) => engine.id === (currentState.activeOcrId || DEFAULT_OCR_TIER_ID));
         const ocrUnavailable = Boolean(selectedOcr && !selectedOcr.isDownloaded);
         const isNeuralActive = currentState.bubbleMode === 'neural';
         const bubbleUnavailable = isNeuralActive && !isBubbleYoloReady;
@@ -458,7 +432,7 @@ export default function EngineSelectionPanel({ state, updateState }: EngineSelec
         if (translationUnavailable && currentState.activeEngineId !== 'gg-translate') repairs.activeEngineId = 'gg-translate';
         if (inpaintUnavailable && currentState.activeInpaintId !== 'simple') repairs.activeInpaintId = 'simple';
         if (colorUnavailable && currentState.activeColorId !== 'none') repairs.activeColorId = 'none';
-        if (ocrUnavailable && currentState.activeOcrId && currentState.activeOcrId !== 'v6-small') repairs.activeOcrId = 'v6-small';
+        if (ocrUnavailable && currentState.activeOcrId && currentState.activeOcrId !== DEFAULT_OCR_TIER_ID) repairs.activeOcrId = DEFAULT_OCR_TIER_ID;
         if (bubbleUnavailable && currentState.bubbleMode !== 'off') repairs.bubbleMode = 'off';
         if (Object.keys(repairs).length > 0) {
           console.warn('[EngineSelectionPanel] Resetting unavailable local model selections.', repairs);
@@ -982,8 +956,8 @@ export default function EngineSelectionPanel({ state, updateState }: EngineSelec
             className="w-full flex items-center justify-between p-3 bg-[var(--color-vellum)] border border-[var(--color-dust)] rounded-md hover:border-[var(--color-ink)] transition-colors cursor-pointer"
           >
             <span className="font-medium truncate pr-2">
-              {ocrBaseEngines.find((engine) => engine.id === (state.activeOcrId || 'v6-small') && engine.isDownloaded)?.name
-                || ocrBaseEngines.find((engine) => engine.id === 'v6-small')?.name
+              {ocrBaseEngines.find((engine) => engine.id === (state.activeOcrId || DEFAULT_OCR_TIER_ID) && engine.isDownloaded)?.name
+                || ocrBaseEngines.find((engine) => engine.id === DEFAULT_OCR_TIER_ID)?.name
                 || 'Loading...'}
             </span>
             <ChevronDown size={16} className={`text-[var(--color-muted)] transition-transform ${isOpenOcr ? 'rotate-180' : ''}`} />
@@ -1019,7 +993,7 @@ export default function EngineSelectionPanel({ state, updateState }: EngineSelec
               <div className="overflow-y-auto flex-1 p-1 custom-scrollbar">
                 {ocrBaseEngines.map((engine) => {
                   const isUninstalled = !engine.isDownloaded;
-                  const isActive = (state.activeOcrId || 'v6-small') === engine.id && !isUninstalled;
+                  const isActive = (state.activeOcrId || DEFAULT_OCR_TIER_ID) === engine.id && !isUninstalled;
                   return (
                     <button
                       key={engine.id}

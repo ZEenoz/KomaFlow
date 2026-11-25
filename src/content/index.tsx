@@ -14,6 +14,7 @@ import {
 import ChapterReaderModal, { type ChapterReaderPage } from './ChapterReaderModal';
 import ChapterReaderFloatingPill from './ChapterReaderFloatingPill';
 import { scanChapterPages, fastScrollPreload, forcePromoteLazyAttributes } from './scanner';
+import { readPageOriginalState, togglePageOriginals } from './pageOriginalToggle';
 import { handleReadingKeydown, handleReadingKeyup, handleReadingCommand, type ReadingShortcutActions } from './readingShortcuts';
 import {
   normalizeSelection,
@@ -244,12 +245,57 @@ export function getActiveCustomSelector(): string | undefined {
 /** Set by FAST_SCAN_CANCEL; a running Fast Scan sweep checks it between steps. */
 let fastScanCancelled = false;
 
+/**
+ * Checks whether this content script runs in the tab's top frame without throwing in
+ * cross-origin embedded readers.
+ *
+ * @returns True when this window is the top frame.
+ */
+function isTopFrame(): boolean {
+  try {
+    return window.top === window;
+  } catch {
+    return false;
+  }
+}
+
 // Scans may target a sub-frame (embedded readers); ZIP export and the chapter reader stay top-frame only,
 // so an embedded reader can never create a second archive.
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.target !== 'content' || message?.source !== 'popup' || message?.request !== true) return;
   if (message.type === 'GET_CHAPTER_ZIP_STATUS') {
     sendResponse(chapterExporter.getStatus());
+    return;
+  }
+  if (message.type === 'GET_PAGE_ORIGINAL_STATE') {
+    try {
+      const topFrame = isTopFrame();
+      const state = topFrame
+        ? readPageOriginalState(translatedRegistry.getRecords(), window.location.href)
+        : { hasTranslated: false, showOriginal: false };
+      sendResponse({ ...state, topFrame });
+    } catch (error) {
+      console.error('[Page Originals] State read failed:', error);
+      sendResponse({ hasTranslated: false, showOriginal: false, topFrame: false });
+    }
+    return;
+  }
+  if (message.type === 'TOGGLE_PAGE_ORIGINALS') {
+    try {
+      if (!isTopFrame()) {
+        sendResponse({ status: 'error', hasTranslated: false, showOriginal: false, toggled: 0 });
+        return;
+      }
+      const result = togglePageOriginals(
+        translatedRegistry.getRecords(),
+        window.location.href,
+        resolveTargetMedia,
+      );
+      sendResponse({ status: 'success', ...result });
+    } catch (error) {
+      console.error('[Page Originals] Toggle failed:', error);
+      sendResponse({ status: 'error', hasTranslated: false, showOriginal: false, toggled: 0 });
+    }
     return;
   }
   if (message.type === 'EXPORT_CHAPTER_ZIP') {

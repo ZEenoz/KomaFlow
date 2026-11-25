@@ -1,5 +1,4 @@
 import type { PopupState } from '../../shared/types';
-import LanguageSelector from './LanguageSelector';
 import AutoTranslateControl from './AutoTranslateControl';
 import { isWebLlmModel, isLlmGpuAvailable } from '../../shared/utils/hardwareUtils';
 export type { Engine } from './EngineSelectionPanel';
@@ -51,12 +50,8 @@ export default function EngineDropdown({ state, updateState }: EngineDropdownPro
         </div>
       )}
 
-      {/* 1. Language Selection (Source & Target) on top */}
-      <LanguageSelector state={state} updateState={updateState} />
-
-      <hr className="border-[var(--color-dust)] opacity-50" />
-
-      {/* 2. Auto-Translate & Manual Mode Controls below */}
+      {/* Auto-Translate & Manual Mode Controls. Source/Target live on the Batch Translate tab:
+          the language pair belongs to the page work it drives, not to the engine picker. */}
       <AutoTranslateControl state={state} updateState={updateState} />
     </div>
   );
