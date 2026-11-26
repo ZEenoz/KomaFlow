@@ -41,12 +41,25 @@ export interface TranslateImageMessage {
   url: string;
 }
 
+/** Language pair a job carries from the queue into the pipeline. */
+export interface JobLanguages {
+  sourceLang?: string;
+  targetLang?: string;
+}
+
 export interface ProcessJobMessage {
   type: 'PROCESS_JOB';
   payload: {
     jobId: number;
     /** Set when the pipeline stage audit is enabled; the offscreen document cannot read storage. */
     debugPipelineAudit?: boolean;
+    /**
+     * Source language frozen when the job was queued. Also travels because the offscreen document
+     * cannot read `chrome.storage` and must not infer the pair from a later runtime message.
+     */
+    sourceLang?: string;
+    /** Target language frozen when the job was queued; wins over the live popup state. */
+    targetLang?: string;
   };
 }
 

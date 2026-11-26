@@ -1611,6 +1611,26 @@ async function fetchImageWithReferer(url: string, pageUrl?: string): Promise<Res
 }
 
 /**
+ * Resolves the language pair a queued job has to translate into.
+ *
+ * The job row records the target language at queue time, so a page never follows a popup setting
+ * the user changed after pressing Translate. Source language is not stored per job, so it comes
+ * from the live popup state; fields stay `undefined` when unknown so the pipeline can fall back
+ * instead of silently translating into English.
+ *
+ * @param {number} jobId - Identifier of the queued translation job.
+ * @returns {Promise<{ sourceLang?: string; targetLang?: string }>} Resolved pair, omitting unknowns.
+ */
+async function resolveJobLanguages(jobId: number): Promise<{ sourceLang?: string; targetLang?: string }> {
+  const job = await db.translationJobs.get(jobId).catch(() => undefined);
+  const popupState = await readPopupState().catch(() => undefined);
+  return {
+    sourceLang: popupState?.sourceLang,
+    targetLang: job?.targetLang ?? popupState?.targetLang,
+  };
+}
+
+/**
  * Handles fetching, storing, and triggering processing for an image translation job.
  * 
  * @param {number} jobId - The ID of the queued translation job.
@@ -1656,15 +1676,23 @@ async function processImageTranslation(jobId: number, srcUrl: string, tabId?: nu
     const auditSetting = await chrome.storage.local
       .get(STORAGE_KEYS.DEBUG_PIPELINE_AUDIT)
       .catch(() => ({}) as Record<string, unknown>);
+    // The language pair travels for the same reason. Without it the offscreen document has to ask
+    // the background again through an unaddressed runtime message, and that answer can be
+    // `undefined` — which silently degraded a Thai job to English (`targetLang || 'en'`).
+    const languages = await resolveJobLanguages(jobId);
     const message: ProcessJobMessage = {
       type: 'PROCESS_JOB',
       payload: {
         jobId: jobId,
         debugPipelineAudit: auditSetting[STORAGE_KEYS.DEBUG_PIPELINE_AUDIT] === true,
+        sourceLang: languages.sourceLang,
+        targetLang: languages.targetLang,
       }
     };
     
-    console.log(`[Background] Routing task ${jobId} to Offscreen Document...`);
+    console.log(
+      `[Background] Routing task ${jobId} (${languages.sourceLang ?? 'auto'} → ${languages.targetLang ?? 'unset'}) to Offscreen Document...`
+    );
     const offscreenResponse = await sendMessageToOffscreen(
       message,
       JOB_STALL_TIMEOUT_MS,

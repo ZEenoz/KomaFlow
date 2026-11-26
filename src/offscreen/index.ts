@@ -1,4 +1,5 @@
 import type {
+  JobLanguages,
   ModelInitializationMessage,
   ModelInitializationPhase,
   ModelInitializationStage,
@@ -84,7 +85,10 @@ chrome.runtime.onMessage.addListener((message: ProcessJobMessage | any, _sender:
     }, JOB_HEARTBEAT_INTERVAL_MS);
 
     // We run this asynchronously so we don't block the listener
-    runTranslationPipeline(jobId)
+    runTranslationPipeline(jobId, {
+      sourceLang: message.payload.sourceLang,
+      targetLang: message.payload.targetLang,
+    })
       .then((bakedBase64) => sendResponse({ status: 'success', bakedBase64 }))
       .catch((err) => sendResponse({ status: 'error', error: err.message }))
       .finally(() => clearInterval(heartbeat));
@@ -617,8 +621,13 @@ async function handleGetModelStatuses(modelIds: string[]): Promise<{
 
 /**
  * Executes the Translation Pipeline Orchestrator for a given job.
+ *
+ * @param jobId - Job whose pipeline runs.
+ * @param languages - Language pair frozen when the job was queued; absent fields fall back to the
+ *   live popup state, which the offscreen document can only read over a runtime message.
+ * @returns The baked translated image as a base64 data URL.
  */
-async function runTranslationPipeline(jobId: number): Promise<string> {
+async function runTranslationPipeline(jobId: number, languages: JobLanguages = {}): Promise<string> {
   /**
    * Sends an addressed model-initialization lifecycle event to background.
    *
@@ -644,7 +653,7 @@ async function runTranslationPipeline(jobId: number): Promise<string> {
     });
   };
 
-  return await pipelineOrchestrator.runPipeline(jobId, reportInitialization);
+  return await pipelineOrchestrator.runPipeline(jobId, reportInitialization, languages);
 }
 
 // Auto-check and cache default OCR model when offscreen document initializes

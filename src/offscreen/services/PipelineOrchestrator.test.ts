@@ -241,6 +241,28 @@ describe('PipelineOrchestrator', () => {
     blobSpy.mockRestore();
   });
 
+  it('translates into the language the job was queued with, not the live popup state', async () => {
+    const mockImageRecord = { id: 1, jobId: 100, rawImageBlob: new Blob(['fake image data'], { type: 'image/png' }) };
+    ((db.images as any).first as any).mockResolvedValue(mockImageRecord);
+    // The popup still answers English: reading the pair from this unaddressed reply is exactly what
+    // used to turn a Thai batch into English pages.
+    vi.spyOn(chrome.runtime, 'sendMessage').mockImplementation((_message: any, callback: any) => {
+      callback({ activeInpaintId: 'simple', activeOcrId: 'v6-small', targetLang: 'en', activeEngineId: 'gg-translate' });
+    });
+    const blobSpy = vi.spyOn(pipelineOrchestrator as any, 'blobToArrayBuffer').mockResolvedValue(new ArrayBuffer(8));
+
+    await pipelineOrchestrator.runPipeline(100, undefined, { sourceLang: 'en', targetLang: 'th' });
+
+    expect(pipelineOrchestrator.getTranslationManager().processTranslation).toHaveBeenCalledWith(
+      expect.any(Array),
+      'en',
+      'th',
+      expect.any(Function),
+      expect.anything(),
+    );
+    blobSpy.mockRestore();
+  });
+
   it('falls back to Simple Fill when an advanced inpaint model is not cached', async () => {
     const mockImageRecord = { id: 1, jobId: 100, rawImageBlob: new Blob(['fake image data'], { type: 'image/png' }) };
     ((db.images as any).first as any).mockResolvedValue(mockImageRecord);

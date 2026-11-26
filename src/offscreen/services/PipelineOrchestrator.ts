@@ -2,7 +2,7 @@ import { db } from '../../db';
 import type { TypesetMode } from '../../shared/constants';
 import { DEFAULT_SFX_POLICY, isPreservedArtwork, resolveSfxPolicyStrategy } from '../../shared/sfx/sfxPolicy';
 import { isPipelineAuditEnabled, logPipelineAudit } from './pipelineAudit';
-import type { PopupState, ModelInitializationStage } from '../../shared/types';
+import type { PopupState, ModelInitializationStage, JobLanguages } from '../../shared/types';
 import { OcrManager, type InitializationLifecycleCallback, type OcrTier } from './OcrManager';
 import { DEFAULT_OCR_TIER_ID } from '../../shared/ocrTiers';
 import { TranslationManager, translationManager as defaultTranslationManager } from './TranslationManager';
@@ -162,6 +162,12 @@ export class PipelineOrchestrator {
    * 
    * Returns a base64 DataURL of the "baked" image (with translated text burned in) 
    * for the Content Script to immediately display without layout breakage.
+   *
+   * @param jobId - Job whose page is translated and baked.
+   * @param onInitialization - Optional lifecycle callback for model initialization events.
+   * @param queuedLanguages - Language pair frozen when the job was queued. It wins over the live
+   *   popup state, which this document can only read through an unaddressed runtime message.
+   * @returns The baked page as a base64 data URL.
    */
   async runPipeline(
     jobId: number,
@@ -171,6 +177,7 @@ export class PipelineOrchestrator {
       stage?: ModelInitializationStage,
       modelName?: string
     ) => void,
+    queuedLanguages: JobLanguages = {},
   ): Promise<string> {
     const activeInits = new Map<string, { stage?: ModelInitializationStage; modelName?: string }>();
     const makeLifecycle = (defaultStage: ModelInitializationStage, defaultModel?: string): InitializationLifecycleCallback => {
@@ -210,8 +217,19 @@ export class PipelineOrchestrator {
       const inpaintTier = await this.resolveInstalledInpaintTier(requestedInpaintTier);
       const requestedColorTier = (popupState?.activeColorId as ColorTierId) || 'none';
       const colorTier = await this.resolveInstalledColorTier(requestedColorTier);
-      const sourceLang = popupState?.sourceLang || 'auto';
-      const targetLang = popupState?.targetLang || 'en';
+      // The language pair travels with the job: reading it back from popup state alone meant a lost
+      // reply to an unaddressed runtime message silently ran the whole page as English.
+      const sourceLang = queuedLanguages.sourceLang ?? popupState?.sourceLang ?? 'auto';
+      const targetLang = queuedLanguages.targetLang ?? popupState?.targetLang ?? 'en';
+      if (!queuedLanguages.targetLang && !popupState?.targetLang) {
+        console.warn(
+          `[PipelineOrchestrator] Job ${jobId} carried no target language and popup state is unreachable; translating to 'en' instead.`
+        );
+      }
+      // Always on: every "it came out English" report is answered by the pair and engine that ran.
+      console.log(
+        `[PipelineOrchestrator] Job ${jobId} language ${sourceLang} → ${targetLang} (engine: ${popupState?.activeEngineId ?? 'unset'}, pair from ${queuedLanguages.targetLang ? 'job' : 'popup'})`
+      );
       const hyphenationPromise = loadHyphenationLanguage(targetLang);
       const ocrTier: OcrTier = popupState?.activeOcrId || DEFAULT_OCR_TIER_ID;
       const resolvedFontFamily = resolveRenderFontFamily(popupState?.renderFontPresetId);
