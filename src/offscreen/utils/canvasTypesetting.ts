@@ -709,7 +709,7 @@ function renderTextBlocksDefault(
     const rawPoly = b.polygon.slice(0, 4);
     if (rawPoly.length < 4) continue;
 
-    const fixed = b.typesetBox !== undefined;
+    let fixed = b.typesetBox !== undefined;
     // A typesetBox is already validated in page coordinates. Never rotate, clip, scale,
     // or decollide it. Integration must persist this actual angle 0 for Studio editing.
     const angle = fixed ? 0 : b.angle ?? (calculateRotationAngle(b.polygon) * 180) / Math.PI;
@@ -753,10 +753,27 @@ function renderTextBlocksDefault(
     };
 
     try {
-      const { dstPoints, fontSize: targetFontSize } = fixed
-        ? { dstPoints: poly, fontSize: bubbleLayoutFontTarget(b) }
-        : resizeRegionToFontSize(region, pageWidth, pageHeight);
-      if (fixed && measureBubbleLayoutFontSize(ctx, b, b.typesetBox!, fontFamily, isBold, targetLang, minFontSize, undefined, isItalic) === 0) continue;
+      let dstPoints: Point2D[];
+      let targetFontSize: number;
+      if (fixed) {
+        dstPoints = poly;
+        targetFontSize = bubbleLayoutFontTarget(b);
+        if (measureBubbleLayoutFontSize(ctx, b, b.typesetBox!, fontFamily, isBold, targetLang, minFontSize, undefined, isItalic) === 0) {
+          // The source text was already erased by inpainting: dropping this block leaves an
+          // empty white bubble. Render best-effort free text inside the validated box instead.
+          console.warn(
+            `[canvasTypesetting] Fixed bubble fit returned 0 for block ${i} (${translation.length} chars); rendering best-effort free layout`
+          );
+          fixed = false;
+          region.fixed = false;
+          region.typesetMode = 'balloon';
+          region.isRounded = false;
+          region.contourPoints = undefined;
+          targetFontSize = region.fontSize;
+        }
+      } else {
+        ({ dstPoints, fontSize: targetFontSize } = resizeRegionToFontSize(region, pageWidth, pageHeight));
+      }
       const wordCount = translation.split(/\s+/).filter(Boolean).length;
       if (wordCount >= 2) {
         // Same quad dims renderRegionDefault will lay out against (edge midpoints).

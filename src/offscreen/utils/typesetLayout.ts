@@ -1,4 +1,5 @@
 import { HyphenationService, INSERTED_HYPHEN } from './hyphenation';
+import { measureLineInkHeight, resolveLinePitch } from './typography/inkMetrics';
 import {
   NO_LINE_START_RE,
   OPENING_MARK_RE,
@@ -765,6 +766,12 @@ export function fitFontSizeWithLines(
   // instead of measuring (and later wrapping) Thai at bare code units.
   // Same narrow predicate as the wrapper branch, so measurement and rendering never disagree.
   const isClusterScript = SPACELESS_SCRIPT_RE.test(text);
+  // Stacked marks in Thai/Lao/Khmer/Myanmar can exceed one em vertically. Only the cluster
+  // scripts consult ink metrics; Latin/CJK keep the fixed 1.2em fit budget.
+  const fitLineHeight = (size: number, lines: string[]): number =>
+    isClusterScript
+      ? resolveLinePitch(size, measureLineInkHeight(ctx as unknown as Pick<CanvasRenderingContext2D, 'measureText'>, lines), LINE_HEIGHT)
+      : size * LINE_HEIGHT;
   const isCjk = !isClusterScript && CJK_REGEX.test(text);
   const rawWords = isCjk
     ? (text.match(/[\u3040-\u30ff\u31f0-\u31ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uac00-\ud7af\u1100-\u11ff\u3130-\u318f\u0900-\u097f\u0e00-\u0e7f\u0400-\u04ff\uff01-\uffee\u3000-\u303f]|[a-zA-Z0-9'’-]+|[^\s]/g) || [])
@@ -834,7 +841,7 @@ export function fitFontSizeWithLines(
 
     if (maxWordWidth <= maxW) {
       const lines = reflowText(mCtx, text, maxW, targetLang, preserveNewlines);
-      const lineH = mid * LINE_HEIGHT;
+      const lineH = fitLineHeight(mid, lines);
       const allLinesFitW = lines.every((l) => mCtx.measureText(l).width <= maxW + 0.5);
       const hasNoHyphenBreaks = lines.every((l) => (!l.endsWith('-') && !l.endsWith(INSERTED_HYPHEN)) || text.includes(l));
       if (allLinesFitW && lines.length * lineH <= maxH && hasNoHyphenBreaks) {
@@ -867,7 +874,7 @@ export function fitFontSizeWithLines(
       if (mid === 0) break;
       mCtx.font = fontSpec(mid, fontFamily, text, customCjk, isBold, isItalic);
       const lines = reflowText(mCtx, text, maxW, targetLang, preserveNewlines);
-      const lineH = mid * LINE_HEIGHT;
+      const lineH = fitLineHeight(mid, lines);
       const allFitW = lines.every((l) => mCtx.measureText(l).width <= maxW + 0.5);
       const totalH = lines.length * lineH;
       if (allFitW && totalH <= maxH) {
@@ -887,7 +894,7 @@ export function fitFontSizeWithLines(
       mCtx.font = fontSpec(mid, fontFamily, text, customCjk, isBold, isItalic);
       const lines = wrapText(mCtx, text, maxW, targetLang);
       const allLinesFitW = lines.every((l) => mCtx.measureText(l).width <= maxW + 0.5);
-      if (allLinesFitW && lines.length * mid * LINE_HEIGHT <= maxH) {
+      if (allLinesFitW && lines.length * fitLineHeight(mid, lines) <= maxH) {
         consider(mid, lines);
         break;
       }
@@ -909,7 +916,7 @@ export function fitFontSizeWithLines(
     if (mid === 0) break;
     mCtx.font = fontSpec(mid, fontFamily, text, customCjk, isBold, isItalic);
     const lines = reflowText(mCtx, text, maxW, targetLang);
-    const lineH = mid * LINE_HEIGHT;
+    const lineH = fitLineHeight(mid, lines);
     const allLinesFitW = lines.every((l) => mCtx.measureText(l).width <= maxW + 0.5);
     const hasNoHyphenBreaks = lines.every((l) => (!l.endsWith('-') && !l.endsWith(INSERTED_HYPHEN)) || text.includes(l));
     if (allLinesFitW && lines.length * lineH <= maxH && hasNoHyphenBreaks) {

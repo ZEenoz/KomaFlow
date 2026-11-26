@@ -14,10 +14,18 @@ import { MINIMUM_READABLE_FONT_SIZE, type PositionedLine } from './contourTypese
 import { TypesetStrategyFactory, measureDefaultLayout } from '../engines/typeset';
 import { compactSpecialSymbols } from '../../shared/utils/textCleaning';
 import { DEFAULT_RENDER_FONT_FAMILY, calcHorizontal, makeMeasurer } from './renderer/cotransLineBreaker';
+import { measureLineInkHeight, resolveLinePitch } from './typography/inkMetrics';
+import { SPACELESS_SCRIPT_RE } from '../../shared/text/lineBreaks';
 /** Stroke width as a multiple of font size for the comic lettering outline. */
 export const STROKE_WIDTH_RATIO = 0.07;
 /** Extra line advance as a multiple of font size added by the rasterizer. */
 export const LINE_SPACING_RATIO = 0.01;
+/** Page margin preserved by the axis-aligned canvas bounds clamp. */
+const CANVAS_BOUNDS_MARGIN = 4;
+/** Maximum block rotation whose local line axes still approximate page axes. */
+const MAX_BOUNDS_CLAMP_ANGLE_DEG = 15;
+/** Sine of {@link MAX_BOUNDS_CLAMP_ANGLE_DEG}, used to reject rotated transforms. */
+const MAX_BOUNDS_CLAMP_SKEW = Math.sin((MAX_BOUNDS_CLAMP_ANGLE_DEG * Math.PI) / 180);
 import {
   dist,
   rotatePoint,
@@ -190,23 +198,32 @@ export function renderRegionDefault(
   const drawableLines = fitted.lines.filter((line) => line.trim());
   if (drawableLines.length === 0) return null;
 
-  const drawFont = fontSpec(fitted.size, fontFamily, drawableLines.join(''), undefined, isBold, isItalic);
+  const joinedDrawable = drawableLines.join('');
+  const drawFont = fontSpec(fitted.size, fontFamily, joinedDrawable, undefined, isBold, isItalic);
   ctx.save();
   ctx.font = drawFont;
   const widths = drawableLines.map((line) => ctx.measureText(line).width);
   const maxLineWidth = Math.max(...widths);
+  // Match typesetLayout's vertical-fit predicate so fit and paint agree on line pitch:
+  // stacked-mark scripts (Thai, Lao, Khmer, Myanmar) use measured glyph ink, while Latin/CJK
+  // keep their fixed legacy leading.
+  const measuredInkHeight = SPACELESS_SCRIPT_RE.test(joinedDrawable)
+    ? measureLineInkHeight(ctx, drawableLines)
+    : null;
 
   const bgSize = bg ? Math.max(Math.trunc(fitted.size * STROKE_WIDTH_RATIO), 1) : 0;
   const strokeWidth = bg ? Math.max(1, bgSize * 2) : 0;
-  const spacingY = Math.trunc(fitted.size * LINE_SPACING_RATIO);
-  const lineStep = fitted.size + spacingY;
-  const totalBlockHeight = fitted.size * drawableLines.length + spacingY * (drawableLines.length - 1);
+  // Keep the truncated advance used by width-only contexts, so their spacing is byte-identical.
+  const minimumPitchRatio = 1 + Math.trunc(fitted.size * LINE_SPACING_RATIO) / fitted.size;
+  const lineStep = resolveLinePitch(fitted.size, measuredInkHeight, minimumPitchRatio);
+  const lastLineHeight = Math.max(fitted.size, measuredInkHeight ?? 0);
+  const totalBlockHeight = lastLineHeight + lineStep * (drawableLines.length - 1);
 
   // Position block:
   // If positionedLines from Koharu contour scanline solver are available, use exact line baselines.
   // Otherwise center block vertically within normV.
   const hasPositionedLines = Boolean(fitted.positionedLines && fitted.positionedLines.length === drawableLines.length);
-  const startY = (normV - totalBlockHeight) / 2;
+  const centeredStartY = (normV - totalBlockHeight) / 2;
 
   // Rigid affine transform: unit vector along top edge, unit vector along left edge.
   // Scale factors are exactly 1.0, preserving razor-sharp vector anti-aliasing without bitmap resampling.
@@ -223,6 +240,22 @@ export function renderRegionDefault(
   ctx.fillStyle = fg;
   ctx.lineJoin = 'round';
   ctx.miterLimit = 2;
+
+  // Whole-canvas guard: only axis-aligned/low-angle transforms let local line bounds map
+  // directly to page bounds. Contour baselines stay solver-owned.
+  const canvasWidth = ctx.canvas?.width ?? 0;
+  const canvasHeight = ctx.canvas?.height ?? 0;
+  const canClampToCanvas = canvasWidth > 0 && canvasHeight > 0
+    && a > 0 && d > 0
+    && Math.abs(b) <= MAX_BOUNDS_CLAMP_SKEW
+    && Math.abs(c) <= MAX_BOUNDS_CLAMP_SKEW;
+  const startY = canClampToCanvas && !hasPositionedLines
+    ? Math.max(
+        CANVAS_BOUNDS_MARGIN,
+        Math.min(tl.y + centeredStartY, canvasHeight - CANVAS_BOUNDS_MARGIN - totalBlockHeight)
+      ) - tl.y
+    : centeredStartY;
+
   const computeLineX = (lineIdx: number): number => {
     const positioned = hasPositionedLines ? fitted.positionedLines?.[lineIdx] : undefined;
     if (positioned) {
@@ -244,8 +277,11 @@ export function renderRegionDefault(
     } else {
       lineX = (normH - maxLineWidth) / 2;
     }
-    if (tl.x + lineX < 4) {
-      lineX = 4 - tl.x;
+    if (canClampToCanvas) {
+      lineX = Math.max(
+        CANVAS_BOUNDS_MARGIN,
+        Math.min(tl.x + lineX, canvasWidth - CANVAS_BOUNDS_MARGIN - widths[lineIdx])
+      ) - tl.x;
     }
     return lineX;
   };

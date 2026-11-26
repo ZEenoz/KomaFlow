@@ -1,7 +1,8 @@
 import { describe, it, expect, vi } from 'vitest';
 import { createCanvas } from 'canvas';
-import { calcHorizontal, compactSpecialSymbols, resizeRegionToFontSize, measureDefaultLayout, renderRegionDefault } from './cotransDefaultRenderer';
+import { calcHorizontal, compactSpecialSymbols, resizeRegionToFontSize, measureDefaultLayout, renderRegionDefault, LINE_SPACING_RATIO } from './cotransDefaultRenderer';
 import { fitFontSizeWithLines } from './typesetLayout';
+import { INK_LEADING_RATIO } from './typography/inkMetrics';
 import { sanitizeTypesetText } from '../../shared/utils/textCleaning';
 
 /** Minimal ctx: measureText returns 10px per character; font is a no-op setter. */
@@ -9,6 +10,30 @@ function mockCtx() {
   return {
     font: '',
     measureText: (t: string) => ({ width: t.length * 10 }),
+  } as any;
+}
+
+/** Width-only drawing ctx: no ascent/descent, so renderer must keep legacy line spacing. */
+function mockDrawCtx() {
+  return {
+    ...mockCtx(),
+    save: vi.fn(),
+    restore: vi.fn(),
+    setTransform: vi.fn(),
+    fillText: vi.fn(),
+    strokeText: vi.fn(),
+  } as any;
+}
+
+/** Drawing ctx whose Thai ink is 21px ascent + 6px descent at every font size. */
+function thaiInkDrawCtx() {
+  return {
+    ...mockDrawCtx(),
+    measureText: (t: string) => ({
+      width: t.length * 10,
+      actualBoundingBoxAscent: 21,
+      actualBoundingBoxDescent: 6,
+    }),
   } as any;
 }
 
@@ -150,6 +175,36 @@ describe('shared default layout measurement', () => {
     const measured = measureDefaultLayout(ctx, 'A', 500, 500, 59, 120, 'Georgia, serif');
     expect(measured.size).toBeGreaterThan(48);
     expect(measured.size).toBeLessThanOrEqual(120);
+  });
+
+  it('uses Thai ink height for line spacing when it exceeds 1.01em', () => {
+    const ctx = thaiInkDrawCtx();
+    const metadata = { ...region(120, 120, 20, 'ก็ นี้', 'ก็ นี้ ขึ้น อีกนิด…'), fixed: false };
+    const result = renderRegionDefault(ctx, metadata, metadata.polygon, 20, 20, 'sans-serif');
+    expect(result).not.toBeNull();
+    expect(result!.fontSize).toBe(20);
+    expect(result!.lineSpacing).toBeGreaterThan(1 + LINE_SPACING_RATIO);
+    expect(result!.fontSize * result!.lineSpacing).toBe(27 + Math.ceil(20 * INK_LEADING_RATIO));
+  });
+
+  it('keeps the exact legacy line spacing for width-only measurement mocks', () => {
+    const ctx = mockDrawCtx();
+    const metadata = { ...region(140, 100, 20, '', 'Several lines of dialogue text'), fixed: false };
+    const result = renderRegionDefault(ctx, metadata, metadata.polygon, 20, 20);
+    expect(result).not.toBeNull();
+    const legacyStep = result!.fontSize + Math.trunc(result!.fontSize * LINE_SPACING_RATIO);
+    expect(result!.fontSize * result!.lineSpacing).toBeCloseTo(legacyStep);
+  });
+
+  it('nudges an axis-aligned top-edge block back inside the canvas', () => {
+    const drawCtx = createCanvas(200, 200).getContext('2d');
+    const fillSpy = vi.spyOn(drawCtx, 'fillText');
+    const metadata = { ...region(30, 20, 6, '', 'one two three four five six seven eight'), fixed: false };
+    const result = renderRegionDefault(drawCtx, metadata, metadata.polygon, 6);
+    expect(result).not.toBeNull();
+    const drawnY = fillSpy.mock.calls.map((call) => call[2] as number);
+    expect(Math.min(...drawnY)).toBeGreaterThanOrEqual(4);
+    expect(Math.max(...drawnY)).toBeLessThanOrEqual(196);
   });
 });
 

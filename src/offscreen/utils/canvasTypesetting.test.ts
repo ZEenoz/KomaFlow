@@ -344,12 +344,21 @@ describe('Canvas Typesetting', () => {
     expectQuad(quads[2], quad(140, 50, 100, 100));
   });
 
-  it('rejects the minimum-font fallback when complete text cannot fit a tiny fixed box', () => {
+  it('renders an unfittable fixed box best-effort instead of silently dropping the erased block', () => {
     const box = { x: 50, y: 50, w: 2, h: 2 };
     const block = { text: 'Cannot fit here', polygon: quad(50, 50, 100, 100), typesetBox: box, fontSize: 20 };
     const ctx = createCanvas(500, 500).getContext('2d');
     expect(measureBubbleLayoutFontSize(ctx, block, box)).toBe(0);
-    expect(captureDefaultRender([block]).results).toEqual([null]);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const [info] = captureDefaultRender([block]).results;
+      expect(info).not.toBeNull();
+      expect(info!.lines.length).toBeGreaterThan(0);
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('block 0'));
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('15 chars'));
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it('keeps the contour route usable when only an overflowing minimum layout exists', () => {

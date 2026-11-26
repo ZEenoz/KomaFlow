@@ -416,6 +416,27 @@ describe('typesetLayout', () => {
       return ctx;
     }
 
+    /**
+     * Builds the Thai width mock plus realistic stacked-mark ink: 1.05em ascent, 0.3em descent.
+     *
+     * @returns Mock context exposing width and actual ink extents.
+     */
+    function createThaiInkCtx() {
+      const ctx = {
+        font: '16px sans-serif',
+        measureText(t: string) {
+          const sizeMatch = ctx.font.match(/(\d+)px/);
+          const size = sizeMatch ? parseInt(sizeMatch[1], 10) : 16;
+          let width = 0;
+          for (const ch of t) {
+            width += /[\u0E31\u0E34-\u0E3A\u0E47-\u0E4E]/.test(ch) ? 0 : THAI_ADVANCE_EM * size;
+          }
+          return { width, actualBoundingBoxAscent: size * 1.05, actualBoundingBoxDescent: size * 0.3 };
+        },
+      };
+      return ctx;
+    }
+
     it('fills a 220x90 balloon instead of collapsing to the 6px floor', () => {
       const ctx = createThaiCtx();
       const result = fitFontSizeWithLines(ctx, THAI_DIALOGUE, 'sans-serif', 220, 90, 24, 48);
@@ -436,6 +457,14 @@ describe('typesetLayout', () => {
       expect(large.size).toBeGreaterThanOrEqual(40);
       expect(large.size).toBeGreaterThan(medium.size);
       expect(medium.size).toBeGreaterThan(PRE_FIX_FLOOR_PX * 2);
+    });
+
+    it('shrinks the Thai fit when measured stacked marks exceed the 1.2em line budget', () => {
+      const text = 'ฉันสัญญากับเธอ';
+      const normal = fitFontSizeWithLines(createThaiCtx(), text, 'sans-serif', 400, 40, 30, 30);
+      const inkAware = fitFontSizeWithLines(createThaiInkCtx(), text, 'sans-serif', 400, 40, 30, 30);
+      expect(normal.size).toBe(30);
+      expect(inkAware.size).toBeLessThan(normal.size);
     });
 
     it('never leaves a Thai line starting with an orphan mark', () => {
