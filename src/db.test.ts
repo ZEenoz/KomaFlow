@@ -1,6 +1,6 @@
 import 'fake-indexeddb/auto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanupOldJobs, db, JOB_RETENTION_DAYS, type TranslationJob } from './db';
+import { cleanupOldJobs, db, deleteJobs, JOB_RETENTION_DAYS, type TranslationJob } from './db';
 import { STORAGE_KEYS } from './shared/constants';
 
 const MILLISECONDS_PER_DAY = 24 * 60 * 60 * 1000;
@@ -12,17 +12,9 @@ const NOW = new Date('2026-09-07T12:00:00.000Z').getTime();
  * @returns Resolves after all table records are removed.
  */
 async function clearDatabase(): Promise<void> {
-  await db.transaction(
-    'rw',
-    db.translationJobs,
-    db.projectFolders,
-    db.images,
-    db.textBlocks,
-    db.fonts,
-    async () => {
-      await Promise.all(db.tables.map((table) => table.clear()));
-    }
-  );
+  await db.transaction('rw', db.tables, async () => {
+    await Promise.all(db.tables.map((table) => table.clear()));
+  });
 }
 
 beforeEach(async () => {
@@ -267,5 +259,103 @@ describe('translation job cleanup', () => {
 
     expect(await db.translationJobs.get(sixDayOld)).toBeDefined();
     expect(await db.translationJobs.get(eightDayOld)).toBeUndefined();
+  });
+});
+
+describe('job deletion tombstones and project references', () => {
+  it('exposes the v7 syncId indexes and tombstone table', () => {
+    expect(db.translationJobs.schema.indexes.some((index) => index.name === 'syncId')).toBe(true);
+    expect(db.projectFolders.schema.indexes.some((index) => index.name === 'syncId')).toBe(true);
+    expect(db.table('syncTombstones').schema.primKey.keyPath).toBe('syncId');
+  });
+
+  it('records tombstones and clears stale project cover and order in one pass', async () => {
+    const projectId = (await db.projectFolders.add({
+      title: 'Chapter 1',
+      timestamp: NOW,
+      isFavorite: false,
+      syncId: 'project-sync',
+    }))!;
+    const deletedJob = (await db.translationJobs.add({
+      timestamp: NOW,
+      status: 'completed',
+      folderId: projectId,
+      syncId: 'job-sync-deleted',
+    }))!;
+    const keptJob = (await db.translationJobs.add({
+      timestamp: NOW,
+      status: 'completed',
+      folderId: projectId,
+      syncId: 'job-sync-kept',
+    }))!;
+    await db.projectFolders.update(projectId, {
+      coverJobId: deletedJob,
+      customOrder: [deletedJob, keptJob],
+    });
+    const imageId = (await db.images.add({
+      jobId: deletedJob,
+      rawImageBlob: new Blob(['deleted']),
+    }))!;
+    await db.textBlocks.add({
+      imageId,
+      originalText: 'old',
+      translatedText: 'new',
+      posX: 0,
+      posY: 0,
+      width: 10,
+      height: 10,
+      fontSize: 12,
+      fontFamily: 'sans-serif',
+      color: '#000000',
+    });
+
+    await deleteJobs([deletedJob]);
+
+    expect(await db.translationJobs.get(deletedJob)).toBeUndefined();
+    expect(await db.images.get(imageId)).toBeUndefined();
+    expect(await db.textBlocks.where('imageId').equals(imageId).count()).toBe(0);
+    expect(await db.syncTombstones.get('job-sync-deleted')).toEqual({
+      syncId: 'job-sync-deleted',
+      kind: 'job',
+      deletedAt: NOW,
+    });
+
+    const project = await db.projectFolders.get(projectId);
+    expect(project?.coverJobId).toBe(keptJob);
+    expect(project?.customOrder).toEqual([keptJob]);
+    expect(project?.updatedAt).toBe(NOW);
+  });
+
+  it('auto-stamps syncId and updatedAt on new jobs and tombstones them on delete', async () => {
+    const jobId = (await db.translationJobs.add({
+      timestamp: NOW,
+      status: 'completed',
+    }))!;
+    const created = await db.translationJobs.get(jobId);
+    expect(created?.syncId).toBeTruthy();
+    expect(created?.updatedAt).toBe(NOW);
+
+    await deleteJobs([jobId, 9999]);
+
+    expect(await db.translationJobs.get(jobId)).toBeUndefined();
+    expect(await db.syncTombstones.get(created!.syncId!)).toEqual({
+      syncId: created!.syncId!,
+      kind: 'job',
+      deletedAt: NOW,
+    });
+    expect(await db.syncTombstones.count()).toBe(1);
+  });
+
+  it('skips tombstones for unknown IDs or rows missing syncId', async () => {
+    const jobId = (await db.translationJobs.add({
+      timestamp: NOW,
+      status: 'completed',
+    }))!;
+    await db.translationJobs.update(jobId, { syncId: undefined });
+
+    await deleteJobs([jobId, 9999]);
+
+    expect(await db.translationJobs.get(jobId)).toBeUndefined();
+    expect(await db.syncTombstones.count()).toBe(0);
   });
 });

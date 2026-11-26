@@ -1,32 +1,26 @@
 import { db, deleteJobs } from '../../db';
+import { createSyncId } from '../../shared/librarySync';
+import { invalidateJobThumbnail } from '../canvas/thumbnailRenderer';
+
+export { getProjectStats, type ProjectStats } from './projectStats';
+export {
+  clearLibrary,
+  getLibraryStorageBreakdown,
+  type ClearLibraryMode,
+  type ClearLibraryOptions,
+  type ClearLibraryResult,
+  type ClearLibraryScope,
+  type LibraryStorageBreakdown,
+} from './libraryMaintenance';
+export {
+  getStorageQuota,
+  requestPersistentStorage,
+  HIGH_STORAGE_WARNING_THRESHOLD_PERCENT,
+  type StorageQuotaInfo,
+} from './storageQuota';
 
 /** Default fallback name for newly created manga projects. */
 export const DEFAULT_PROJECT_TITLE = 'Untitled Manga';
-
-/** Bytes per megabyte used for human-readable quota math. */
-const BYTES_PER_MB = 1024 * 1024;
-
-/** High storage usage percentage threshold triggering warning indicators. */
-export const HIGH_STORAGE_WARNING_THRESHOLD_PERCENT = 80;
-
-export interface ProjectStats {
-  pageCount: number;
-  translatedCount: number;
-  pendingCount: number;
-  errorCount: number;
-  totalBytes: number;
-  totalTextBlocks: number;
-  languages: string[];
-}
-
-export interface StorageQuotaInfo {
-  persisted: boolean;
-  usedBytes: number;
-  quotaBytes: number;
-  usedMB: number;
-  quotaMB: number;
-  usagePercent: number;
-}
 
 /**
  * Creates a new manga project folder.
@@ -47,6 +41,7 @@ export async function createProject(title?: string, description?: string): Promi
     isFavorite: false,
     description: description?.trim() || '',
     customOrder: [],
+    syncId: createSyncId(),
   });
 
   return Number(projectId);
@@ -84,30 +79,57 @@ export async function setProjectCover(projectId: number, jobId: number): Promise
 }
 
 /**
- * Deletes a project. Optionally cascades deletion to all member translation jobs and images.
+ * Deletes a project atomically. Optionally cascades deletion to all member translation jobs.
+ *
+ * When the project carries a `syncId`, a project tombstone is written in the same transaction.
+ * Cascaded jobs leave their own tombstones through {@link deleteJobs}, and their cached thumbnails
+ * are invalidated after the database commit.
  *
  * @param projectId - Target project ID to delete.
  * @param cascadeDeleteJobs - When true, permanently deletes member images. When false, unlinks them to library.
  * @returns Resolves once database operations complete.
  */
 export async function deleteProject(projectId: number, cascadeDeleteJobs = false): Promise<void> {
-  const memberJobs = await db.translationJobs.where('folderId').equals(projectId).toArray();
-  const jobIds = memberJobs.flatMap((j) => (j.id !== undefined ? [j.id] : []));
+  let deletedJobIds: number[] = [];
 
-  if (cascadeDeleteJobs && jobIds.length > 0) {
-    await deleteJobs(jobIds);
-  } else if (jobIds.length > 0) {
-    await db.transaction('rw', db.translationJobs, async () => {
-      for (const id of jobIds) {
-        await db.translationJobs.update(id, {
-          folderId: undefined,
-          projectOrder: undefined,
+  await db.transaction(
+    'rw',
+    db.translationJobs,
+    db.images,
+    db.textBlocks,
+    db.projectFolders,
+    db.syncTombstones,
+    async () => {
+      const project = await db.projectFolders.get(projectId);
+      const memberJobs = await db.translationJobs.where('folderId').equals(projectId).toArray();
+      const jobIds = memberJobs.flatMap((job) => (job.id !== undefined ? [job.id] : []));
+
+      if (cascadeDeleteJobs && jobIds.length > 0) {
+        await deleteJobs(jobIds);
+        deletedJobIds = jobIds;
+      } else if (jobIds.length > 0) {
+        for (const id of jobIds) {
+          await db.translationJobs.update(id, {
+            folderId: undefined,
+            projectOrder: undefined,
+          });
+        }
+      }
+
+      if (project?.syncId) {
+        await db.syncTombstones.put({
+          syncId: project.syncId,
+          kind: 'project',
+          deletedAt: Date.now(),
         });
       }
-    });
-  }
+      await db.projectFolders.delete(projectId);
+    }
+  );
 
-  await db.projectFolders.delete(projectId);
+  for (const jobId of deletedJobIds) {
+    invalidateJobThumbnail(jobId);
+  }
 }
 
 /**
@@ -134,7 +156,7 @@ export async function addJobsToProject(projectId: number, jobIds: number[]): Pro
       });
     }
 
-    const newOrder = [...(project.customOrder || currentMembers.map((m) => m.id!)), ...jobIds];
+    const newOrder = [...(project.customOrder || currentMembers.map((member) => member.id!)), ...jobIds];
     await db.projectFolders.update(projectId, {
       customOrder: newOrder,
       updatedAt: Date.now(),
@@ -153,7 +175,7 @@ export async function removeJobsFromProject(jobIds: number[]): Promise<void> {
   if (jobIds.length === 0) return;
 
   const jobs = await db.translationJobs.where('id').anyOf(jobIds).toArray();
-  const affectedProjects = new Set(jobs.map((j) => j.folderId).filter((f): f is number => typeof f === 'number'));
+  const affectedProjects = new Set(jobs.map((job) => job.folderId).filter((folderId): folderId is number => typeof folderId === 'number'));
 
   await db.transaction('rw', db.translationJobs, db.projectFolders, async () => {
     for (const jobId of jobIds) {
@@ -164,10 +186,10 @@ export async function removeJobsFromProject(jobIds: number[]): Promise<void> {
     }
 
     for (const projectId of affectedProjects) {
-      const proj = await db.projectFolders.get(projectId);
-      if (proj && proj.customOrder) {
-        const filteredOrder = proj.customOrder.filter((id) => !jobIds.includes(id));
-        const newCover = proj.coverJobId && jobIds.includes(proj.coverJobId) ? filteredOrder[0] : proj.coverJobId;
+      const project = await db.projectFolders.get(projectId);
+      if (project && project.customOrder) {
+        const filteredOrder = project.customOrder.filter((id) => !jobIds.includes(id));
+        const newCover = project.coverJobId && jobIds.includes(project.coverJobId) ? filteredOrder[0] : project.coverJobId;
         await db.projectFolders.update(projectId, {
           customOrder: filteredOrder,
           coverJobId: newCover,
@@ -198,111 +220,4 @@ export async function reorderProjectPages(projectId: number, orderedJobIds: numb
       updatedAt: Date.now(),
     });
   });
-}
-
-/**
- * Aggregates high-level translation metrics for a project.
- *
- * @param projectId - Primary key ID of the project.
- * @returns Aggregated progress counts, bubble statistics, and languages.
- */
-export async function getProjectStats(projectId: number): Promise<ProjectStats> {
-  const jobs = await db.translationJobs.where('folderId').equals(projectId).toArray();
-  const jobIds = jobs.flatMap((j) => (j.id !== undefined ? [j.id] : []));
-
-  let translatedCount = 0;
-  let pendingCount = 0;
-  let errorCount = 0;
-  const langSet = new Set<string>();
-
-  for (const job of jobs) {
-    if (job.status === 'completed') translatedCount++;
-    else if (job.status === 'error') errorCount++;
-    else pendingCount++;
-
-    if (job.targetLang) langSet.add(job.targetLang);
-  }
-
-  const images = jobIds.length > 0 ? await db.images.where('jobId').anyOf(jobIds).toArray() : [];
-  let totalBytes = 0;
-  const imageIds: number[] = [];
-
-  for (const img of images) {
-    if (img.id !== undefined) imageIds.push(img.id);
-    if (img.rawImageBlob && typeof img.rawImageBlob.size === 'number') {
-      totalBytes += img.rawImageBlob.size;
-    }
-    if (img.translatedImageBlob && typeof img.translatedImageBlob.size === 'number') {
-      totalBytes += img.translatedImageBlob.size;
-    }
-    // The page delivered to the content script is stored too, and it is usually the largest of the
-    // three because it is a lossless PNG of the whole page. Leaving it out made the meter report a
-    // user's usage as roughly a third lower than it is.
-    if (img.bakedImageBlob && typeof img.bakedImageBlob.size === 'number') {
-      totalBytes += img.bakedImageBlob.size;
-    }
-  }
-
-  const textBlockCount = imageIds.length > 0 ? await db.textBlocks.where('imageId').anyOf(imageIds).count() : 0;
-
-  return {
-    pageCount: jobs.length,
-    translatedCount,
-    pendingCount,
-    errorCount,
-    totalBytes,
-    totalTextBlocks: textBlockCount,
-    languages: Array.from(langSet),
-  };
-}
-
-/**
- * Queries current browser disk usage and quota estimates.
- *
- * @returns Standardized usage statistics in bytes, megabytes, and percentage.
- */
-export async function getStorageQuota(): Promise<StorageQuotaInfo> {
-  let persisted = false;
-  let usage = 0;
-  let quota = 0;
-
-  if (typeof navigator !== 'undefined' && navigator.storage) {
-    try {
-      persisted = (await navigator.storage.persisted?.()) ?? false;
-      const estimate = await navigator.storage.estimate?.();
-      usage = estimate?.usage || 0;
-      quota = estimate?.quota || 0;
-    } catch (err) {
-      console.warn('[ProjectStore] Failed to query storage estimate:', err);
-    }
-  }
-
-  const usedMB = Math.round(usage / BYTES_PER_MB);
-  const quotaMB = Math.round(quota / BYTES_PER_MB);
-  const usagePercent = quota > 0 ? Math.min(100, Math.round((usage / quota) * 100)) : 0;
-
-  return {
-    persisted,
-    usedBytes: usage,
-    quotaBytes: quota,
-    usedMB,
-    quotaMB,
-    usagePercent,
-  };
-}
-
-/**
- * Requests persistent storage from the browser to safeguard manga projects from eviction.
- *
- * @returns True if the browser granted persistent storage.
- */
-export async function requestPersistentStorage(): Promise<boolean> {
-  if (typeof navigator !== 'undefined' && navigator.storage?.persist) {
-    try {
-      return await navigator.storage.persist();
-    } catch (err) {
-      console.warn('[ProjectStore] Failed to request persistent storage:', err);
-    }
-  }
-  return false;
 }

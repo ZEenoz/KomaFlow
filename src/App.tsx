@@ -17,8 +17,10 @@ import {
 } from 'lucide-react';
 import './index.css';
 import { Studio } from './studio/Studio';
-import { ProjectsDashboard } from './studio/projects/ProjectsDashboard';
+import { ProjectsDashboard, type OpenClearLibraryOptions } from './studio/projects/ProjectsDashboard';
 import { AddFromLibraryModal } from './studio/modals/AddFromLibraryModal';
+import { ClearLibraryModal } from './studio/modals/ClearLibraryModal';
+import { addJobsToProject } from './studio/state/projectStore';
 import type { TextObject } from './studio/types';
 import type { ProjectFolder } from './db';
 import {
@@ -111,6 +113,8 @@ export function computeNewBounds(
 
 export default function App() {
   const [jobs, setJobs] = useState<TranslationJob[]>([]);
+  const [projects, setProjects] = useState<ProjectFolder[]>([]);
+  const [libraryRefreshKey, setLibraryRefreshKey] = useState(0);
   const [activeJobId, setActiveJobId] = useState<number | null>(null);
   const [imageRecord, setImageRecord] = useState<ImageRecord | null>(null);
   const [textBlocks, setTextBlocks] = useState<TextBlock[]>([]);
@@ -123,6 +127,8 @@ export default function App() {
   const [activeProject, setActiveProject] = useState<ProjectFolder | null>(null);
   const [isAddFromLibraryOpen, setIsAddFromLibraryOpen] = useState(false);
   const [addFromLibraryProjectId, setAddFromLibraryProjectId] = useState<number | null>(null);
+  const [isClearLibraryOpen, setIsClearLibraryOpen] = useState(false);
+  const [clearLibraryInitial, setClearLibraryInitial] = useState<OpenClearLibraryOptions>({});
 
   // Studio editor is the default workspace; Projects dashboard is an optional library manager
   const [appMode, setAppMode] = useState<'dashboard' | 'editor'>('editor');
@@ -145,9 +151,89 @@ export default function App() {
     setAppMode('editor');
   };
 
+  /**
+   * Opens one translated page from the library dashboard in the Canvas editor.
+   *
+   * @param jobId - Page to load; its folder also becomes the active project context.
+   * @returns Resolves once project context and editor mode are set.
+   */
+  const handleOpenPage = async (jobId: number) => {
+    const job = await db.translationJobs.get(jobId);
+    setActiveJobId(jobId);
+    if (job?.folderId !== undefined) {
+      setCurrentProjectId(job.folderId);
+      setActiveProject((await db.projectFolders.get(job.folderId)) ?? null);
+    } else {
+      setCurrentProjectId(null);
+      setActiveProject(null);
+    }
+    setAppMode('editor');
+  };
+
+  /**
+   * Assigns one library page to a project and refreshes both collections.
+   *
+   * @param jobId - Page to move into the project.
+   * @param projectId - Destination project.
+   * @returns Resolves after the database write and UI refresh.
+   */
+  const handleAssignPageToProject = async (jobId: number, projectId: number): Promise<void> => {
+    try {
+      await addJobsToProject(projectId, [jobId]);
+      await Promise.all([loadJobs(), loadProjects()]);
+      setLibraryRefreshKey((key) => key + 1);
+    } catch (err) {
+      console.error('[Studio] Failed assigning page to project:', err);
+    }
+  };
+
+  /**
+   * Opens the global Clear Library dialog, optionally preselecting targets.
+   *
+   * @param opts - Initial mode and selected project/page IDs.
+   */
+  const handleOpenClearLibrary = (opts?: OpenClearLibraryOptions): void => {
+    setClearLibraryInitial(opts ?? {});
+    setIsClearLibraryOpen(true);
+  };
+
+  /**
+   * Reloads the library after destructive maintenance and repairs editor state
+   * that pointed at deleted records.
+   *
+   * @returns Resolves after jobs, projects, and selection state settle.
+   */
+  const handleLibraryCleared = async (): Promise<void> => {
+    const [remainingJobs, remainingProjects] = await Promise.all([
+      db.translationJobs.orderBy('timestamp').reverse().toArray(),
+      db.projectFolders.toArray(),
+    ]);
+    setJobs(remainingJobs);
+    setProjects(remainingProjects);
+    setLibraryRefreshKey((key) => key + 1);
+
+    setActiveJobId((current) => (
+      current !== null && remainingJobs.some((job) => job.id === current)
+        ? current
+        : remainingJobs[0]?.id ?? null
+    ));
+
+    if (currentProjectId !== null && !remainingProjects.some((project) => project.id === currentProjectId)) {
+      setCurrentProjectId(null);
+      setActiveProject(null);
+    } else {
+      setActiveProject((current) => (
+        current?.id === undefined
+          ? current
+          : remainingProjects.find((project) => project.id === current.id) ?? null
+      ));
+    }
+  };
+
   const fileInputRef = useRef<HTMLInputElement>(null);
   const activeBlobUrlsRef = useRef<string[]>([]);
   const jobLoadVersionRef = useRef(0);
+  const hasAppliedQueryJobRef = useRef(false);
   const uploadInFlightRef = useRef(false);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<BatchUploadProgress | null>(null);
@@ -168,17 +254,42 @@ export default function App() {
       const allJobs = await db.translationJobs.orderBy('timestamp').reverse().toArray();
       setJobs(allJobs);
       if (allJobs.length > 0) {
-        const params = new URLSearchParams(window.location.search);
-        const queryJobId = params.get('jobId') ? Number(params.get('jobId')) : null;
-        if (queryJobId && allJobs.some((j) => j.id === queryJobId)) {
-          setActiveJobId(queryJobId);
-        } else {
-          setActiveJobId((curr) => curr ?? allJobs[0].id ?? null);
+        if (!hasAppliedQueryJobRef.current) {
+          hasAppliedQueryJobRef.current = true;
+          const params = new URLSearchParams(window.location.search);
+          const queryJobId = params.get('jobId') ? Number(params.get('jobId')) : null;
+          if (queryJobId && allJobs.some((j) => j.id === queryJobId)) {
+            setActiveJobId(queryJobId);
+            return allJobs;
+          }
         }
+        setActiveJobId((curr) => (
+          curr !== null && allJobs.some((j) => j.id === curr)
+            ? curr
+            : allJobs[0].id ?? null
+        ));
+      } else {
+        setActiveJobId(null);
       }
       return allJobs;
     } catch (err) {
       console.error('[Studio] Failed to load jobs:', err);
+      return [];
+    }
+  }, []);
+
+  /**
+   * Loads every project folder for the rail picker and library-level dialogs.
+   *
+   * @returns The refreshed project collection.
+   */
+  const loadProjects = useCallback(async () => {
+    try {
+      const allProjects = await db.projectFolders.toArray();
+      setProjects(allProjects);
+      return allProjects;
+    } catch (err) {
+      console.error('[Studio] Failed to load projects:', err);
       return [];
     }
   }, []);
@@ -238,8 +349,8 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    void cleanupOldJobs().then(() => loadJobs());
-  }, [loadJobs]);
+    void cleanupOldJobs().then(() => Promise.all([loadJobs(), loadProjects()]));
+  }, [loadJobs, loadProjects]);
 
   useEffect(() => {
     void loadJobDetails(activeJobId);
@@ -422,15 +533,38 @@ export default function App() {
         projectId={addFromLibraryProjectId}
         onClose={() => setIsAddFromLibraryOpen(false)}
         onJobsAdded={() => {
+          setLibraryRefreshKey((key) => key + 1);
           void loadJobs();
+          void loadProjects();
           if (activeJobId) void loadJobDetails(activeJobId);
         }}
+      />
+
+      <ClearLibraryModal
+        isOpen={isClearLibraryOpen}
+        onClose={() => setIsClearLibraryOpen(false)}
+        projects={projects}
+        jobs={jobs}
+        activeProjectId={currentProjectId}
+        activeJobId={activeJobId}
+        initialMode={clearLibraryInitial.mode}
+        initialSelectedProjectIds={clearLibraryInitial.projectIds}
+        initialSelectedJobIds={clearLibraryInitial.jobIds}
+        onCleared={handleLibraryCleared}
       />
 
       {/* MODE 1: PROJECTS DASHBOARD */}
       {appMode === 'dashboard' ? (
         <ProjectsDashboard
           onOpenProject={handleOpenProject}
+          onOpenPage={(jobId) => void handleOpenPage(jobId)}
+          onOpenClearLibrary={handleOpenClearLibrary}
+          refreshKey={libraryRefreshKey}
+          activeProjectId={currentProjectId}
+          activeJobId={activeJobId}
+          onLibraryMutated={() => {
+            void handleLibraryCleared();
+          }}
           onBackToEditor={() => setAppMode('editor')}
           onOpenAddFromLibrary={(projId) => {
             setAddFromLibraryProjectId(projId);
@@ -544,7 +678,13 @@ export default function App() {
                 projectId={currentProjectId ?? undefined}
                 projectName={activeProject?.title}
                 onBackToProjects={() => setAppMode('dashboard')}
-                onSelectPage={(jobId) => setActiveJobId(jobId)}
+                onSelectPage={(jobId) => void handleOpenPage(jobId)}
+                allJobs={jobs}
+                projects={projects}
+                libraryRefreshKey={libraryRefreshKey}
+                onOpenClearLibrary={() => handleOpenClearLibrary()}
+                onAssignPageToProject={(jobId, projectId) => void handleAssignPageToProject(jobId, projectId)}
+                onSelectProject={(projectId) => void handleOpenProject(projectId)}
                 onOpenAddFromLibrary={() => {
                   if (currentProjectId) {
                     setAddFromLibraryProjectId(currentProjectId);
@@ -568,8 +708,16 @@ export default function App() {
                     onClick={() => setAppMode('dashboard')}
                     className="flex items-center gap-2 px-4 py-2 rounded-xl bg-[#181a26] hover:bg-[#282d3f] border border-[#282d3f] text-slate-200 text-xs font-semibold transition"
                   >
-                    <span>View Projects</span>
+                    <span>Open Library</span>
                   </button>
+                  {jobs[0]?.id !== undefined && (
+                    <button
+                      onClick={() => void handleOpenPage(jobs[0].id!)}
+                      className="flex items-center gap-2 px-4 py-2 rounded-xl bg-[#181a26] hover:bg-[#282d3f] border border-[#282d3f] text-slate-200 text-xs font-semibold transition"
+                    >
+                      <span>Open History</span>
+                    </button>
+                  )}
                   <button
                     onClick={() => fileInputRef.current?.click()}
                     disabled={isUploading}

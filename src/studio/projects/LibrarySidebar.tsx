@@ -22,6 +22,12 @@ export interface LibrarySidebarProps {
   totalProjects: number;
   totalImages: number;
   selectedProject: ProjectFolder | null;
+  /** Changes whenever library contents or storage totals are mutated. */
+  refreshKey?: number;
+  /** Opens the destructive Clear Library dialog. */
+  onOpenClearLibrary: () => void;
+  /** Selected project title, page name, or multi-select count. */
+  selectedSummary?: string;
   onOpenSelected: () => void;
   onExportSelected: () => void;
   onRenameSelected: () => void;
@@ -34,6 +40,9 @@ export const LibrarySidebar: React.FC<LibrarySidebarProps> = ({
   totalProjects,
   totalImages,
   selectedProject,
+  refreshKey,
+  onOpenClearLibrary,
+  selectedSummary,
   onOpenSelected,
   onExportSelected,
   onRenameSelected,
@@ -49,7 +58,7 @@ export const LibrarySidebar: React.FC<LibrarySidebarProps> = ({
       setQuota(q);
       setIsPersisted(q.persisted);
     });
-  }, []);
+  }, [refreshKey]);
 
   const handleRequestPersistence = async () => {
     const granted = await requestPersistentStorage();
@@ -148,14 +157,24 @@ export const LibrarySidebar: React.FC<LibrarySidebarProps> = ({
             <span>Manga projects are saved in this browser. Download ZIP or CBZ backups to keep permanent copies.</span>
           </div>
         </div>
+
+        {/* Destructive library maintenance */}
+        <button
+          type="button"
+          onClick={onOpenClearLibrary}
+          className="w-full flex items-center justify-center gap-2 py-2 px-3 rounded-lg bg-red-500/5 hover:bg-red-500/15 border border-red-500/30 hover:border-red-500/50 text-red-300 text-xs font-semibold transition cursor-pointer"
+        >
+          <Trash2 className="w-3.5 h-3.5" />
+          <span>Clear Library</span>
+        </button>
       </div>
 
       {/* Bottom Section: Actions on Selected Project */}
       <div className="flex flex-col gap-2 pt-4 border-t border-[#262a3b]">
         <div className="flex items-center justify-between text-xs text-slate-400 font-medium">
           <span className="uppercase text-[0.65rem] tracking-wider font-bold">Actions</span>
-          <span className="text-[0.65rem] truncate text-slate-500">
-            {isSelected ? selectedProject.title : 'Select a project'}
+          <span className="text-[0.65rem] truncate text-slate-500 max-w-[11rem]" title={selectedSummary}>
+            {selectedSummary ?? (isSelected ? (selectedProject?.title ?? 'Selected') : 'Select a project or page')}
           </span>
         </div>
 

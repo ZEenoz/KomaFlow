@@ -1,220 +1,221 @@
-import React, { useCallback, useEffect, useState } from 'react';
-import { db, type ProjectFolder } from '../../db';
-import { createProject, deleteProject, renameProject } from '../state/projectStore';
-import type { BatchExportFormat } from '../export/batchExport';
+import React from 'react';
+import type { ClearLibraryMode, ClearLibraryResult } from '../state/projectStore';
+import { ClearLibraryModal } from '../modals/ClearLibraryModal';
 import { LibrarySidebar } from './LibrarySidebar';
 import { ProjectsGrid } from './ProjectsGrid';
 import { ProjectDetailsPane } from './ProjectDetailsPane';
+import {
+  DeleteProjectDialog,
+  ExportProgressOverlay,
+  RenameProjectDialog,
+} from './ProjectDashboardDialogs';
+import { useProjectsDashboard } from './useProjectsDashboard';
 
+/** Options a parent may pass when it owns the Clear Library dialog. */
+export interface OpenClearLibraryOptions {
+  /** Initial clearing mode. */
+  mode?: ClearLibraryMode;
+  /** Initial project selection. */
+  projectIds?: number[];
+  /** Initial page selection. */
+  jobIds?: number[];
+}
+
+/** Props for the unified library dashboard. */
 export interface ProjectsDashboardProps {
+  /** Opens a project in the Studio editor. */
   onOpenProject: (projectId: number) => void;
+  /** Opens the add-pages-from-library dialog. */
   onOpenAddFromLibrary: (projectId: number) => void;
+  /** Opens a translated page in the Canvas editor. */
+  onOpenPage?: (jobId: number) => void;
+  /** Delegates Clear Library to the parent when provided. */
+  onOpenClearLibrary?: (opts?: OpenClearLibraryOptions) => void;
+  /** Forces a library reload when the parent changes it. */
+  refreshKey?: number;
+  /** Project open in the editor, warned about before clearing. */
+  activeProjectId?: number | null;
+  /** Page open in the editor, warned about before clearing. */
+  activeJobId?: number | null;
+  /** Notifies the parent after a library mutation. */
+  onLibraryMutated?: (result?: ClearLibraryResult) => void;
   onBackToEditor?: () => void;
 }
 
-export const ProjectsDashboard: React.FC<ProjectsDashboardProps> = ({
-  onOpenProject,
-  onOpenAddFromLibrary,
-  onBackToEditor,
-}) => {
-  const [selectedProjectId, setSelectedProjectId] = useState<number | null>(null);
-  const [renameTarget, setRenameTarget] = useState<ProjectFolder | null>(null);
-  const [renameValue, setRenameValue] = useState('');
-  const [deleteTarget, setDeleteTarget] = useState<ProjectFolder | null>(null);
-  const [isExporting, setIsExporting] = useState(false);
-  const [exportProgressText, setExportProgressText] = useState('');
-
-  const [projects, setProjects] = useState<ProjectFolder[]>([]);
-  const [totalImages, setTotalImages] = useState(0);
-
-  const refreshProjects = useCallback(async () => {
-    try {
-      const allProjects = await db.projectFolders.toArray();
-      const count = await db.translationJobs.count();
-      setProjects(allProjects);
-      setTotalImages(count);
-    } catch (err) {
-      console.warn('[ProjectsDashboard] Failed loading projects:', err);
-    }
-  }, []);
-
-  useEffect(() => {
-    void refreshProjects();
-  }, [refreshProjects]);
-
-  const selectedProject = projects.find((p) => p.id === selectedProjectId) || null;
-
-  const handleCreateProject = async () => {
-    const newId = await createProject();
-    await refreshProjects();
-    setSelectedProjectId(newId);
-  };
-
-  const handleStartRename = (projectId: number) => {
-    const proj = projects.find((p) => p.id === projectId);
-    if (!proj) return;
-    setRenameTarget(proj);
-    setRenameValue(proj.title);
-  };
-
-  const handleConfirmRename = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!renameTarget || !renameTarget.id || !renameValue.trim()) return;
-    await renameProject(renameTarget.id, renameValue);
-    await refreshProjects();
-    setRenameTarget(null);
-  };
-
-  const handleStartDelete = (projectId: number) => {
-    const proj = projects.find((p) => p.id === projectId);
-    if (proj) setDeleteTarget(proj);
-  };
-
-  const handleConfirmDelete = async (cascade: boolean) => {
-    if (!deleteTarget || !deleteTarget.id) return;
-    await deleteProject(deleteTarget.id, cascade);
-    await refreshProjects();
-    if (selectedProjectId === deleteTarget.id) {
-      setSelectedProjectId(null);
-    }
-    setDeleteTarget(null);
-  };
-
-  const handleBatchExport = async (format: BatchExportFormat) => {
-    if (!selectedProjectId) return;
-    setIsExporting(true);
-    setExportProgressText('Preparing export bundle...');
-    try {
-      const { exportProjectBundle } = await import('../export/batchExport');
-      await exportProjectBundle(selectedProjectId, format, (_cur: number, _tot: number, status: string) => {
-        setExportProgressText(status);
-      });
-    } catch (err) {
-      console.error('[Dashboard] Export failed:', err);
-      alert(err instanceof Error ? err.message : 'Export failed');
-    } finally {
-      setIsExporting(false);
-      setExportProgressText('');
-    }
-  };
+/**
+ * Renders the unified library dashboard with projects, translated pages,
+ * filtering, inspectors, and destructive maintenance.
+ *
+ * @param props - Parent navigation, refresh, and mutation callbacks.
+ * @returns Full-screen library dashboard.
+ */
+export const ProjectsDashboard: React.FC<ProjectsDashboardProps> = (props) => {
+  const {
+    projects,
+    jobs,
+    selectedProject,
+    selectedJob,
+    selectedSummary,
+    selectedProjectId,
+    selectedJobId,
+    selectedProjectIds,
+    selectedJobIds,
+    activeTab,
+    datePreset,
+    customDate,
+    sortOrder,
+    layoutMode,
+    localRefreshKey,
+    clearRequest,
+    isClearLibraryOpen,
+    renameTarget,
+    renameValue,
+    deleteTarget,
+    isExporting,
+    exportProgressText,
+    setActiveTab,
+    setDatePreset,
+    setCustomDate,
+    setSortOrder,
+    setLayoutMode,
+    setSelectedProjectId,
+    setSelectedJobId,
+    setRenameTarget,
+    setRenameValue,
+    setDeleteTarget,
+    setIsClearLibraryOpen,
+    toggleProjectSelection,
+    toggleJobSelection,
+    clearSelection,
+    handleCreateProject,
+    handleStartRename,
+    handleConfirmRename,
+    handleConfirmDelete,
+    handleOpenClearLibrary,
+    handleCleared,
+    handleDeletePage,
+    handleAssignPageToProject,
+    handleBatchExport,
+  } = useProjectsDashboard(props);
 
   return (
     <div className="relative w-screen h-screen overflow-hidden bg-[#090a0f] text-slate-100 flex">
-      {/* Left Library Sidebar */}
       <LibrarySidebar
         totalProjects={projects.length}
-        totalImages={totalImages}
+        totalImages={jobs.length}
         selectedProject={selectedProject}
-        onOpenSelected={() => selectedProjectId && onOpenProject(selectedProjectId)}
-        onExportSelected={() => handleBatchExport('images')}
-        onRenameSelected={() => selectedProjectId && handleStartRename(selectedProjectId)}
-        onDeleteSelected={() => selectedProjectId && handleStartDelete(selectedProjectId)}
-        onCreateNewProject={handleCreateProject}
-        onBackToEditor={onBackToEditor}
+        refreshKey={(props.refreshKey ?? 0) + localRefreshKey}
+        selectedSummary={selectedSummary}
+        onOpenClearLibrary={() => handleOpenClearLibrary()}
+        onOpenSelected={() => {
+          if (selectedProjectId !== null) props.onOpenProject(selectedProjectId);
+          else if (selectedJobId !== null) props.onOpenPage?.(selectedJobId);
+        }}
+        onExportSelected={() => void handleBatchExport('images')}
+        onRenameSelected={() => selectedProjectId !== null && handleStartRename(selectedProjectId)}
+        onDeleteSelected={() => {
+          const project = projects.find((entry) => entry.id === selectedProjectId);
+          if (project) setDeleteTarget(project);
+        }}
+        onCreateNewProject={() => void handleCreateProject()}
+        onBackToEditor={props.onBackToEditor}
       />
 
-      {/* Center Projects Grid */}
       <ProjectsGrid
         projects={projects}
+        jobs={jobs}
         selectedProjectId={selectedProjectId}
-        onSelectProject={(id) => setSelectedProjectId(id)}
-        onOpenProject={onOpenProject}
-        onRenameProject={handleStartRename}
-        onDeleteProject={handleStartDelete}
-        onExportProject={(id) => {
-          setSelectedProjectId(id);
-          handleBatchExport('images');
+        selectedJobId={selectedJobId}
+        activeTab={activeTab}
+        onTabChange={setActiveTab}
+        datePreset={datePreset}
+        onDatePresetChange={setDatePreset}
+        customDate={customDate}
+        onCustomDateChange={setCustomDate}
+        sortOrder={sortOrder}
+        onSortOrderChange={setSortOrder}
+        layoutMode={layoutMode}
+        onLayoutModeChange={setLayoutMode}
+        selectedProjectIds={selectedProjectIds}
+        selectedJobIds={selectedJobIds}
+        onToggleSelectProject={toggleProjectSelection}
+        onToggleSelectJob={toggleJobSelection}
+        onSelectProject={(projectId) => {
+          setSelectedProjectId(projectId);
+          setSelectedJobId(null);
         }}
-        onCreateProject={handleCreateProject}
+        onOpenProject={props.onOpenProject}
+        onSelectJob={(jobId) => {
+          setSelectedJobId(jobId);
+          setSelectedProjectId(null);
+        }}
+        onOpenPage={(jobId) => {
+          if (props.onOpenPage) props.onOpenPage(jobId);
+          else {
+            setSelectedJobId(jobId);
+            setSelectedProjectId(null);
+          }
+        }}
+        onDeletePage={(jobId) => void handleDeletePage(jobId)}
+        onClearSelected={clearSelection}
+        onRenameProject={handleStartRename}
+        onDeleteProject={(projectId) => {
+          const project = projects.find((entry) => entry.id === projectId);
+          if (project) setDeleteTarget(project);
+        }}
+        onExportProject={(projectId) => {
+          setSelectedProjectId(projectId);
+          void handleBatchExport('images', projectId);
+        }}
+        onCreateProject={() => void handleCreateProject()}
       />
 
-      {/* Right Details Sidebar */}
       <ProjectDetailsPane
         project={selectedProject}
-        onOpenStudio={() => selectedProjectId && onOpenProject(selectedProjectId)}
-        onAddFromLibrary={() => selectedProjectId && onOpenAddFromLibrary(selectedProjectId)}
-        onBatchExport={handleBatchExport}
+        selectedJob={selectedJob}
+        projects={projects}
+        onOpenPage={props.onOpenPage}
+        onDeletePage={(jobId) => void handleDeletePage(jobId)}
+        onAssignPageToProject={(jobId, projectId) => void handleAssignPageToProject(jobId, projectId)}
+        onOpenStudio={() => selectedProjectId !== null && props.onOpenProject(selectedProjectId)}
+        onAddFromLibrary={() => selectedProjectId !== null && props.onOpenAddFromLibrary(selectedProjectId)}
+        onBatchExport={(format) => void handleBatchExport(format)}
       />
 
-      {/* Rename Modal */}
+      {!props.onOpenClearLibrary && (
+        <ClearLibraryModal
+          isOpen={isClearLibraryOpen}
+          onClose={() => setIsClearLibraryOpen(false)}
+          projects={projects}
+          jobs={jobs}
+          activeProjectId={props.activeProjectId ?? selectedProjectId}
+          activeJobId={props.activeJobId ?? selectedJobId}
+          initialMode={clearRequest.mode}
+          initialSelectedProjectIds={clearRequest.projectIds}
+          initialSelectedJobIds={clearRequest.jobIds}
+          onCleared={handleCleared}
+        />
+      )}
+
       {renameTarget && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-xs p-4 select-none">
-          <form
-            onSubmit={handleConfirmRename}
-            className="w-full max-w-sm rounded-xl bg-[#161924] border border-[#262a3b] p-5 shadow-2xl flex flex-col gap-4"
-          >
-            <h3 className="text-sm font-semibold text-slate-100">Rename Project</h3>
-            <input
-              type="text"
-              autoFocus
-              value={renameValue}
-              onChange={(e) => setRenameValue(e.target.value)}
-              className="w-full h-9 px-3 rounded-lg bg-[#090a0f] border border-[#262a3b] text-xs text-slate-100 focus:outline-none focus:border-[#60c1e5]"
-            />
-            <div className="flex items-center justify-end gap-2 pt-2">
-              <button
-                type="button"
-                onClick={() => setRenameTarget(null)}
-                className="px-3 py-1.5 text-xs text-slate-400 hover:text-white rounded-lg transition cursor-pointer"
-              >
-                Cancel
-              </button>
-              <button
-                type="submit"
-                className="px-4 py-1.5 text-xs font-semibold bg-[#005a9c] hover:bg-[#1b365d] text-white rounded-lg shadow-md shadow-[rgba(0,90,156,0.25)] transition cursor-pointer"
-              >
-                Save
-              </button>
-            </div>
-          </form>
-        </div>
+        <RenameProjectDialog
+          project={renameTarget}
+          value={renameValue}
+          onChange={setRenameValue}
+          onCancel={() => setRenameTarget(null)}
+          onConfirm={(event) => void handleConfirmRename(event)}
+        />
       )}
 
-      {/* Delete Confirmation Modal */}
       {deleteTarget && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-xs p-4 select-none">
-          <div className="w-full max-w-sm rounded-xl bg-[#161924] border border-[#262a3b] p-5 shadow-2xl flex flex-col gap-4">
-            <h3 className="text-sm font-semibold text-red-400">Delete Project</h3>
-            <p className="text-xs text-slate-400 leading-relaxed">
-              Are you sure you want to delete <strong className="text-slate-200">“{deleteTarget.title}”</strong>?
-            </p>
-            <div className="flex flex-col gap-2 pt-2">
-              <button
-                type="button"
-                onClick={() => handleConfirmDelete(false)}
-                className="w-full py-2 px-3 text-xs font-semibold rounded-lg bg-[#262a3b] hover:bg-[#343b52] text-slate-200 transition cursor-pointer"
-              >
-                Unlink Pages (Keep in Library)
-              </button>
-              <button
-                type="button"
-                onClick={() => handleConfirmDelete(true)}
-                className="w-full py-2 px-3 text-xs font-semibold rounded-lg bg-red-600 hover:bg-red-500 text-white transition cursor-pointer"
-              >
-                Delete Project and All Its Images
-              </button>
-              <button
-                type="button"
-                onClick={() => setDeleteTarget(null)}
-                className="w-full py-1.5 px-3 text-xs text-slate-400 hover:text-white transition cursor-pointer"
-              >
-                Cancel
-              </button>
-            </div>
-          </div>
-        </div>
+        <DeleteProjectDialog
+          project={deleteTarget}
+          onCancel={() => setDeleteTarget(null)}
+          onConfirm={(cascade) => void handleConfirmDelete(cascade)}
+        />
       )}
 
-      {/* Export In-Flight Overlay */}
-      {isExporting && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-xs p-4 select-none">
-          <div className="w-full max-w-xs rounded-xl bg-[#161924] border border-[#262a3b] p-6 shadow-2xl flex flex-col items-center gap-3 text-center">
-            <div className="w-8 h-8 rounded-full border-2 border-[#60c1e5] border-t-transparent animate-spin" />
-            <h4 className="text-sm font-semibold text-slate-100">Exporting Manga Archive</h4>
-            <p className="text-xs text-slate-400">{exportProgressText || 'Packaging files...'}</p>
-          </div>
-        </div>
-      )}
+      {isExporting && <ExportProgressOverlay message={exportProgressText} />}
     </div>
   );
 };

@@ -2,6 +2,7 @@ import 'fake-indexeddb/auto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { db } from '../../db';
 import {
+  clearLibrary,
   createProject,
   deleteProject,
   renameProject,
@@ -9,6 +10,7 @@ import {
   addJobsToProject,
   removeJobsFromProject,
   reorderProjectPages,
+  getLibraryStorageBreakdown,
   getProjectStats,
   getStorageQuota,
 } from './projectStore';
@@ -16,7 +18,7 @@ import {
 const NOW = 1729800000000;
 
 async function clearDatabase(): Promise<void> {
-  await db.transaction('rw', db.translationJobs, db.projectFolders, db.images, db.textBlocks, db.fonts, async () => {
+  await db.transaction('rw', db.tables, async () => {
     await Promise.all(db.tables.map((table) => table.clear()));
   });
 }
@@ -43,6 +45,9 @@ describe('projectStore database operations', () => {
     expect(p2?.title).toBe('Untitled Manga 2');
     expect(p1?.timestamp).toBe(NOW);
     expect(p1?.updatedAt).toBe(NOW);
+    expect(p1?.syncId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+    expect(p2?.syncId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+    expect(p1?.syncId).not.toBe(p2?.syncId);
   });
 
   it('creates project with custom title and description', async () => {
@@ -207,5 +212,163 @@ describe('projectStore database operations', () => {
     expect(quota).toBeDefined();
     expect(typeof quota.usedMB).toBe('number');
     expect(typeof quota.quotaMB).toBe('number');
+  });
+
+  it('records project tombstones and invalidates only cascaded job thumbnails', async () => {
+    const unlinkProject = await createProject('Unlink');
+    const cascadeProject = await createProject('Cascade');
+    const unlinkedJob = (await db.translationJobs.add({
+      timestamp: NOW,
+      status: 'completed',
+      folderId: unlinkProject,
+      syncId: 'job-unlinked',
+    }))!;
+    const cascadedJob = (await db.translationJobs.add({
+      timestamp: NOW,
+      status: 'completed',
+      folderId: cascadeProject,
+      syncId: 'job-cascaded',
+    }))!;
+    const unlinkSyncId = (await db.projectFolders.get(unlinkProject))?.syncId;
+
+    await deleteProject(unlinkProject, false);
+
+    expect(await db.translationJobs.get(unlinkedJob)).toBeDefined();
+    expect((await db.translationJobs.get(unlinkedJob))?.folderId).toBeUndefined();
+    expect(unlinkSyncId).toBeDefined();
+    expect(await db.syncTombstones.get(unlinkSyncId!)).toMatchObject({ kind: 'project' });
+    expect(await db.syncTombstones.where('kind').equals('project').count()).toBe(1);
+
+    const cascadeSyncId = (await db.projectFolders.get(cascadeProject))?.syncId;
+    await deleteProject(cascadeProject, true);
+
+    expect(await db.translationJobs.get(cascadedJob)).toBeUndefined();
+    expect(await db.syncTombstones.get('job-cascaded')).toBeDefined();
+    expect(cascadeSyncId).toBeDefined();
+    expect(await db.syncTombstones.get(cascadeSyncId!)).toMatchObject({
+      kind: 'project',
+      syncId: cascadeSyncId,
+      deletedAt: NOW,
+    });
+  });
+
+  it('clears every page but keeps projects when scope is pages', async () => {
+    const projectId = await createProject('Keep Me');
+    const jobId = (await db.translationJobs.add({
+      timestamp: NOW,
+      status: 'completed',
+      folderId: projectId,
+      syncId: 'page-to-clear',
+    }))!;
+    const imageId = (await db.images.add({
+      jobId,
+      rawImageBlob: { size: 5, type: 'image/png' } as unknown as Blob,
+    }))!;
+    await db.projectFolders.update(projectId, { coverJobId: jobId, customOrder: [jobId] });
+
+    const result = await clearLibrary({ mode: 'all', scope: 'pages' });
+
+    expect(result.deletedJobs).toBe(1);
+    expect(result.deletedImages).toBe(1);
+    expect(result.deletedProjects).toBe(0);
+    expect(result.freedBytes).toBe(5);
+    expect(await db.translationJobs.get(jobId)).toBeUndefined();
+    expect(await db.images.get(imageId)).toBeUndefined();
+    expect(await db.syncTombstones.get('page-to-clear')).toBeDefined();
+    const project = await db.projectFolders.get(projectId);
+    expect(project).toBeDefined();
+    expect(project?.coverJobId).toBeUndefined();
+    expect(project?.customOrder).toEqual([]);
+  });
+
+  it('unlinks member jobs by default when custom projects are cleared', async () => {
+    const selectedProject = await createProject('Selected');
+    const keptProject = await createProject('Kept');
+    const memberJob = (await db.translationJobs.add({
+      timestamp: NOW,
+      status: 'completed',
+      folderId: selectedProject,
+    }))!;
+    const keptJob = (await db.translationJobs.add({
+      timestamp: NOW,
+      status: 'completed',
+      folderId: keptProject,
+    }))!;
+
+    const result = await clearLibrary({
+      mode: 'custom',
+      scope: 'projects',
+      projectIds: [selectedProject],
+      cascadeProjects: false,
+    });
+
+    expect(result.deletedProjects).toBe(1);
+    expect(result.deletedJobs).toBe(0);
+    expect(result.unlinkedJobs).toBe(1);
+    expect(await db.projectFolders.get(selectedProject)).toBeUndefined();
+    expect(await db.projectFolders.get(keptProject)).toBeDefined();
+    expect((await db.translationJobs.get(memberJob))?.folderId).toBeUndefined();
+    expect((await db.translationJobs.get(keptJob))?.folderId).toBe(keptProject);
+  });
+
+  it('cascades projects and deduplicates jobs also listed explicitly', async () => {
+    const selectedProject = await createProject('Cascade');
+    const otherJob = (await db.translationJobs.add({
+      timestamp: NOW,
+      status: 'completed',
+    }))!;
+    const memberJob = (await db.translationJobs.add({
+      timestamp: NOW,
+      status: 'completed',
+      folderId: selectedProject,
+      syncId: 'member-job',
+    }))!;
+
+    const result = await clearLibrary({
+      mode: 'custom',
+      scope: 'all',
+      projectIds: [selectedProject],
+      jobIds: [memberJob, otherJob, memberJob],
+      cascadeProjects: true,
+    });
+
+    expect(result.deletedProjects).toBe(1);
+    expect(result.deletedJobs).toBe(2);
+    expect(result.unlinkedJobs).toBe(0);
+    expect(await db.translationJobs.count()).toBe(0);
+    expect(await db.syncTombstones.get('member-job')).toBeDefined();
+    expect(await db.projectFolders.count()).toBe(0);
+  });
+
+  it('reports raw, translated, and baked bytes per project and job', async () => {
+    const projectId = await createProject('Measured');
+    const jobId = (await db.translationJobs.add({
+      timestamp: NOW,
+      status: 'completed',
+      folderId: projectId,
+    }))!;
+    const unassignedJobId = (await db.translationJobs.add({
+      timestamp: NOW,
+      status: 'completed',
+    }))!;
+
+    const blob = (size: number) => ({ size, type: 'image/png' }) as unknown as Blob;
+    await db.images.add({
+      jobId,
+      rawImageBlob: blob(10),
+      translatedImageBlob: blob(20),
+      bakedImageBlob: blob(30),
+    });
+    await db.images.add({
+      jobId: unassignedJobId,
+      rawImageBlob: blob(5),
+    });
+
+    const breakdown = await getLibraryStorageBreakdown();
+
+    expect(breakdown.totalBytes).toBe(65);
+    expect(breakdown.jobBytesById[jobId]).toBe(60);
+    expect(breakdown.jobBytesById[unassignedJobId]).toBe(5);
+    expect(breakdown.projectBytesById[projectId]).toBe(60);
   });
 });

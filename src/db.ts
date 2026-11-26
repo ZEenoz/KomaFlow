@@ -1,12 +1,31 @@
 import Dexie, { type EntityTable } from 'dexie';
-import type { TypesetMode } from './shared/constants';
-import type { HistoryRetentionPeriod } from './shared/types';
+import { createSyncId, type SyncTombstone } from './shared/librarySync';
 import { STORAGE_KEYS } from './shared/constants';
+import type { HistoryRetentionPeriod } from './shared/types';
+import type {
+  FontRecord,
+  ImageRecord,
+  ProjectFolder,
+  TextBlock,
+  TranslationJob,
+} from './dbTypes';
+
+export type {
+  FontRecord,
+  ImageRecord,
+  JobStatus,
+  ProjectFolder,
+  TextBlock,
+  TranslationJob,
+} from './dbTypes';
 
 // Retention presets use elapsed 24-hour days; a month is a fixed 30-day window.
 const MILLISECONDS_PER_DAY = 24 * 60 * 60 * 1000;
+
+/** Default history retention window in days. */
 export const JOB_RETENTION_DAYS = 7;
 
+/** Day counts for every user-selectable retention preset; null disables auto-deletion. */
 export const RETENTION_PERIOD_DAYS: Readonly<Record<HistoryRetentionPeriod, number | null>> = {
   '1day': 1,
   '1week': JOB_RETENTION_DAYS,
@@ -14,115 +33,17 @@ export const RETENTION_PERIOD_DAYS: Readonly<Record<HistoryRetentionPeriod, numb
   'never': null,
 };
 
-export interface TranslationJob {
-  id?: number;
-  timestamp: number;
-  status?: 'queued' | 'downloading' | 'processing' | 'completed' | 'error';
-  srcUrl?: string;
-  mockTranslatedBlocks?: any[];
-  folderId?: number; // Optional reference to a ProjectFolder
-  projectOrder?: number; // Page ordering sequence inside a ProjectFolder
-  pageName?: string; // Optional user or chapter page label
-  tabId?: number; // Tracks which tab requested this job for the Pub/Sub response
-  ocrEngineId?: string;
-  inpaintTier?: string;
-  colorTier?: string;
-  translationEngineId?: string;
-  bubbleMode?: string;
-  renderFontPresetId?: string;
-  renderFontBold?: boolean;
-  sourceLang?: string;
-  targetLang?: string;
-  completedAt?: number;
-  durationMs?: number;
-}
+/** Tombstone discriminator written when a translation job is permanently removed. */
+const JOB_TOMBSTONE_KIND = 'job' as const;
 
-export interface ProjectFolder {
-  id?: number;
-  title: string;
-  timestamp: number;
-  isFavorite: boolean;
-  updatedAt?: number;
-  coverJobId?: number;
-  customOrder?: number[];
-  description?: string;
-}
-
-export interface ImageRecord {
-  id?: number;
-  jobId: number;
-  rawImageBlob: Blob;
-  /** Inpainted plate with the source text removed; the dashboard shows this, not the lettering. */
-  translatedImageBlob?: Blob;
-  /** The page as delivered to the content script: translated text drawn in. Never rendered in the UI. */
-  bakedImageBlob?: Blob;
-}
-
-export interface TextBlock {
-  id?: number;
-  imageId: number;
-  originalText: string;
-  translatedText: string;
-  posX: number;
-  posY: number;
-  width: number;
-  height: number;
-  fontSize: number;
-  fontFamily: string;
-  color: string;
-  /** Outline color used by the renderer (background-sampled). */
-  strokeColor?: string;
-  direction?: 'h' | 'v';
-  /** Exact Canvas layout lines, persisted so Studio preview matches baked output. */
-  lines?: string[];
-  /** Rendered line advance as a multiple of font size, shared with Studio. */
-  lineSpacing?: number;
-  /** Studio editing preference; never used to reinterpret saved layout on load. */
-  typesetMode?: TypesetMode;
-  /** Mathematical bubble corner radius in image pixels (0 = rectangle, >0 = oval/ellipse curvature). */
-  borderRadius?: number;
-  /** Whether this text block was fitted to a rounded speech bubble. */
-  isRounded?: boolean;
-  /** Organic bubble contour relative to (posX, posY) for scanline contour typesetting in Studio. */
-  contourPoints?: Array<{ x: number; y: number }>;
-  /** Koharu scanline placements (box-local) so Studio paints the exact baked layout before any edit. */
-  positionedLines?: Array<{ text: string; x: number; y: number; width: number; height: number }>;
-  bold?: boolean;
-  italic?: boolean;
-  align?: 'left' | 'center' | 'right';
-  isSkipped?: boolean;
-  /**
-   * Preserved artwork (sound effect / display lettering / fragment) under the active SFX policy.
-   *
-   * Such a block is never erased and never drawn: the original ink stays on the page. Studio must
-   * honour the same pair, otherwise it paints a translation over artwork the pipeline left intact.
-   */
-  isArtwork?: boolean;
-  /** Text block rotation angle in degrees (mean line angle, e.g. -180 to 180). */
-  angle?: number;
-}
-
-/** A font face persisted in the on-demand library (catalog download or user import). */
-export interface FontRecord {
-  /** Stable key: catalog id, or `import-<sanitized>-<timestamp>` for user imports. */
-  id: string;
-  /** CSS family name the face registers under. */
-  family: string;
-  /** Display label for pickers. */
-  label: string;
-  /** Where this face came from; imports render on the storing machine's terms. */
-  source: 'catalog' | 'import';
-  /** Raw font bytes (woff2/ttf/otf). */
-  data: ArrayBuffer;
-  addedAt: number;
-}
-
+/** Shared Dexie connection for jobs, projects, page assets, fonts, and sync tombstones. */
 const db = new Dexie('KitesDatabase') as Dexie & {
   translationJobs: EntityTable<TranslationJob, 'id'>;
   projectFolders: EntityTable<ProjectFolder, 'id'>;
   images: EntityTable<ImageRecord, 'id'>;
   textBlocks: EntityTable<TextBlock, 'id'>;
   fonts: EntityTable<FontRecord, 'id'>;
+  syncTombstones: EntityTable<SyncTombstone, 'syncId'>;
 };
 
 db.version(4).stores({
@@ -147,25 +68,106 @@ db.version(6).stores({
   fonts: 'id, family'
 });
 
+db.version(7).stores({
+  translationJobs: '++id, timestamp, status, folderId, srcUrl, projectOrder, syncId',
+  projectFolders: '++id, title, timestamp, updatedAt, isFavorite, syncId',
+  images: '++id, jobId',
+  textBlocks: '++id, imageId',
+  fonts: 'id, family',
+  syncTombstones: 'syncId, kind, deletedAt'
+}).upgrade(async (transaction) => {
+  await transaction.table('translationJobs').toCollection().modify((job: TranslationJob) => {
+    if (!job.syncId) job.syncId = createSyncId();
+    if (job.updatedAt === undefined || job.updatedAt === null) job.updatedAt = job.timestamp;
+  });
+  await transaction.table('projectFolders').toCollection().modify((project: ProjectFolder) => {
+    if (!project.syncId) project.syncId = createSyncId();
+  });
+});
+
+db.translationJobs.hook('creating', (_primKey, job) => {
+  if (!job.syncId) job.syncId = createSyncId();
+  if (job.updatedAt === undefined || job.updatedAt === null) {
+    job.updatedAt = job.timestamp ?? Date.now();
+  }
+});
+
+db.projectFolders.hook('creating', (_primKey, project) => {
+  if (!project.syncId) project.syncId = createSyncId();
+  if (project.updatedAt === undefined || project.updatedAt === null) {
+    project.updatedAt = project.timestamp ?? Date.now();
+  }
+});
+
 /**
  * Deletes jobs and all associated image and text records in one transaction.
  *
+ * Project covers and custom orders that still reference a deleted job are cleared and stamped
+ * with a fresh `updatedAt`. Jobs that carry a `syncId` leave a tombstone so a later sync can
+ * propagate the deletion.
+ *
  * @param jobIds - Translation job identifiers to remove.
- * @returns Resolves after every parent and child record is deleted.
+ * @returns Resolves after every parent, child, project-reference, and tombstone write completes.
  */
 export async function deleteJobs(jobIds: number[]): Promise<void> {
   if (jobIds.length === 0) return;
+  const uniqueJobIds = Array.from(new Set(jobIds));
 
-  await db.transaction('rw', db.translationJobs, db.images, db.textBlocks, async () => {
-    const images = await db.images.where('jobId').anyOf(jobIds).toArray();
-    const imageIds = images.flatMap((image) => image.id === undefined ? [] : [image.id]);
+  await db.transaction(
+    'rw',
+    db.translationJobs,
+    db.images,
+    db.textBlocks,
+    db.projectFolders,
+    db.syncTombstones,
+    async () => {
+      const jobs = await db.translationJobs.where('id').anyOf(uniqueJobIds).toArray();
+      const deletedJobIds = new Set(
+        jobs.flatMap((job) => (job.id === undefined ? [] : [job.id]))
+      );
+      const deletedAt = Date.now();
 
-    if (imageIds.length > 0) {
-      await db.textBlocks.where('imageId').anyOf(imageIds).delete();
+      const tombstones = jobs.flatMap((job): SyncTombstone[] => (
+        job.syncId
+          ? [{ syncId: job.syncId, kind: JOB_TOMBSTONE_KIND, deletedAt }]
+          : []
+      ));
+      if (tombstones.length > 0) {
+        await db.syncTombstones.bulkPut(tombstones);
+      }
+
+      const affectedProjectIds = new Set(
+        jobs.flatMap((job) => (typeof job.folderId === 'number' ? [job.folderId] : []))
+      );
+      for (const projectId of affectedProjectIds) {
+        const project = await db.projectFolders.get(projectId);
+        if (!project) continue;
+        const changes: Partial<ProjectFolder> = { updatedAt: deletedAt };
+        if (project.customOrder !== undefined) {
+          changes.customOrder = project.customOrder.filter((id) => !deletedJobIds.has(id));
+        }
+        if (project.coverJobId !== undefined && deletedJobIds.has(project.coverJobId)) {
+          const remainingOrder = changes.customOrder ?? project.customOrder ?? [];
+          changes.coverJobId = remainingOrder[0];
+        }
+        await db.projectFolders.update(projectId, changes);
+      }
+
+      const images = deletedJobIds.size > 0
+        ? await db.images.where('jobId').anyOf(Array.from(deletedJobIds)).toArray()
+        : [];
+      const imageIds = images.flatMap((image) => (image.id === undefined ? [] : [image.id]));
+
+      if (imageIds.length > 0) {
+        await db.textBlocks.where('imageId').anyOf(imageIds).delete();
+      }
+      if (deletedJobIds.size > 0) {
+        const deletedIds = Array.from(deletedJobIds);
+        await db.images.where('jobId').anyOf(deletedIds).delete();
+        await db.translationJobs.bulkDelete(deletedIds);
+      }
     }
-    await db.images.where('jobId').anyOf(jobIds).delete();
-    await db.translationJobs.bulkDelete(jobIds);
-  });
+  );
 }
 
 /**
@@ -228,18 +230,26 @@ export async function cleanupOldJobs(
     console.log(`[Database] Running cleanup for jobs older than ${daysToKeep} days...`);
     // Select and cascade under one write lock so an inactive job cannot become
     // active between the eligibility check and deletion in another context.
-    await db.transaction('rw', db.translationJobs, db.images, db.textBlocks, async () => {
-      const oldJobKeys = await db.translationJobs.where('timestamp').below(cutoffTime)
-        .filter((job) => job.folderId === undefined && (job.status === undefined || job.status === 'completed' || job.status === 'error'))
-        .primaryKeys();
-      const oldJobs = oldJobKeys.filter((jobId): jobId is number => jobId !== undefined);
-      if (oldJobs.length > 0) {
-        await deleteJobs(oldJobs);
-        console.log(`[Database] Cleaned up ${oldJobs.length} old jobs.`);
-      } else {
-        console.log('[Database] No old jobs to clean up.');
+    await db.transaction(
+      'rw',
+      db.translationJobs,
+      db.images,
+      db.textBlocks,
+      db.projectFolders,
+      db.syncTombstones,
+      async () => {
+        const oldJobKeys = await db.translationJobs.where('timestamp').below(cutoffTime)
+          .filter((job) => job.folderId === undefined && (job.status === undefined || job.status === 'completed' || job.status === 'error'))
+          .primaryKeys();
+        const oldJobs = oldJobKeys.filter((jobId): jobId is number => jobId !== undefined);
+        if (oldJobs.length > 0) {
+          await deleteJobs(oldJobs);
+          console.log(`[Database] Cleaned up ${oldJobs.length} old jobs.`);
+        } else {
+          console.log('[Database] No old jobs to clean up.');
+        }
       }
-    });
+    );
   } catch (error) {
     console.error('[Database] Cleanup failed:', error);
   }

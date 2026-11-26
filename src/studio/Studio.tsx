@@ -27,8 +27,9 @@ import {
   Download,
   Copy,
   Check,
+  Trash2,
 } from 'lucide-react';
-import { db } from '../db';
+import { db, type ProjectFolder, type TranslationJob } from '../db';
 import { ensureFontsRegistered } from '../shared/fontLibrary';
 import { DEFAULT_OCR_TIER_ID } from '../shared/ocrTiers';
 import { studioStore, useStudioStore } from './state/studioStore';
@@ -51,6 +52,7 @@ import { WarpSettings } from './tools/WarpSettings';
 import { ImageLayerSettings } from './tools/ImageLayerSettings';
 import { PageInfoSettings } from './tools/PageInfoSettings';
 import { PageRail } from './projects/PageRail';
+import { HistoryPagesDropdown } from './projects/HistoryPagesDropdown';
 import { FindReplaceModal } from './modals/FindReplaceModal';
 import { ExportTranscriptModal } from './modals/ExportTranscriptModal';
 import { ShortcutsModal } from './modals/ShortcutsModal';
@@ -76,6 +78,18 @@ export interface StudioProps {
   onBackToProjects?: () => void;
   onSelectPage?: (jobId: number) => void;
   onOpenAddFromLibrary?: () => void;
+  /** All translation jobs for the in-canvas history browser. */
+  allJobs?: TranslationJob[];
+  /** Projects available for page assignment and the project picker. */
+  projects?: ProjectFolder[];
+  /** Forces a reload of rail and dropdown history data after library mutations. */
+  libraryRefreshKey?: number;
+  /** Opens the global Clear Library dialog. */
+  onOpenClearLibrary?: () => void;
+  /** Assigns a history page to a project from the canvas. */
+  onAssignPageToProject?: (jobId: number, projectId: number) => void;
+  /** Opens a project from the canvas rail picker. */
+  onSelectProject?: (projectId: number) => void;
 }
 
 // Stable fallback prevents resetting editor state on unrelated renders without initial objects.
@@ -108,6 +122,12 @@ export const Studio: React.FC<StudioProps> = ({
   onBackToProjects,
   onSelectPage,
   onOpenAddFromLibrary,
+  allJobs,
+  projects,
+  libraryRefreshKey,
+  onOpenClearLibrary,
+  onAssignPageToProject,
+  onSelectProject,
 }) => {
   const activeTool = useStudioStore((s) => s.activeTool);
   const isInfoPanelOpen = useStudioStore((s) => s.isInfoPanelOpen);
@@ -705,13 +725,18 @@ export const Studio: React.FC<StudioProps> = ({
 
   return (
     <div className="flex flex-row gap-3 p-3 w-screen h-screen overflow-hidden bg-[#090a0f] text-slate-100 select-none">
-      {/* 0. MULTI-PAGE CHAPTER RAIL (When viewing within an active Project) */}
-      {projectId && onSelectPage && (
+      {/* 0. DUAL-MODE PAGE RAIL: History is always available, Project when a folder is active */}
+      {onSelectPage && (
         <PageRail
           projectId={projectId}
+          allJobs={allJobs}
+          projects={projects}
           activeJobId={jobId}
+          refreshKey={libraryRefreshKey}
           onSelectPage={onSelectPage}
-          onOpenAddFromLibrary={onOpenAddFromLibrary || (() => {})}
+          onSelectProject={onSelectProject}
+          onOpenAddFromLibrary={onOpenAddFromLibrary}
+          onAssignPageToProject={onAssignPageToProject}
         />
       )}
 
@@ -896,23 +921,45 @@ export const Studio: React.FC<StudioProps> = ({
       <main className="flex-1 flex flex-col h-full bg-[#12141c] border border-[#262a3b] rounded-xl shadow-2xl overflow-hidden">
         {/* Canvas Top Bar */}
         <div className="w-full h-9 bg-[#141724] border-b border-[#262a3b] px-3 flex items-center justify-between text-xs text-slate-300 shrink-0 select-none z-30">
-          <div className="flex items-center gap-2 min-w-0 overflow-hidden">
-            {/* Breadcrumb back to Projects Dashboard */}
+          <div className="flex items-center gap-2 min-w-0">
+            {/* Breadcrumb back to the unified Library dashboard */}
             {onBackToProjects && (
               <button
                 type="button"
                 onClick={onBackToProjects}
                 className="shrink-0 flex items-center gap-1 px-2 py-0.5 rounded-md bg-[#090a0f] border border-[#262a3b] text-slate-300 hover:text-white hover:bg-[#1c1f2e] text-xs font-semibold transition cursor-pointer"
-                title="Back to Projects Dashboard"
+                title="Back to Library"
               >
                 <ChevronLeft className="w-3.5 h-3.5" />
-                <span>Projects</span>
+                <span>Library</span>
               </button>
             )}
             {projectName && (
               <span className="hidden xl:inline text-xs font-semibold text-slate-400 truncate max-w-[120px]" title={projectName}>
                 / {projectName}
               </span>
+            )}
+            {onSelectPage && (
+              <HistoryPagesDropdown
+                jobs={allJobs}
+                projects={projects}
+                activeJobId={jobId}
+                refreshKey={libraryRefreshKey}
+                onSelectPage={onSelectPage}
+                onAssignPageToProject={onAssignPageToProject}
+              />
+            )}
+            {onOpenClearLibrary && (
+              <button
+                type="button"
+                onClick={onOpenClearLibrary}
+                title="Clear Library"
+                aria-label="Clear Library"
+                className="shrink-0 flex items-center gap-1 px-2 py-0.5 rounded-md bg-[#090a0f] border border-[#262a3b] text-slate-400 hover:text-red-300 hover:border-red-500/40 hover:bg-red-500/10 text-xs font-semibold transition cursor-pointer whitespace-nowrap"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span className="hidden 2xl:inline">Clear Library</span>
+              </button>
             )}
 
             {/* 3-Way Presentation View Mode Segmented Control */}

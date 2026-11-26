@@ -1,89 +1,97 @@
 import React, { useEffect, useState } from 'react';
-import {
-  Layers,
-  ChevronLeft,
-  ChevronRight,
-  Plus,
-  Download,
-  FileText,
-  FileCode,
-  Image as ImageIcon,
-  CheckCircle2,
-  Clock,
-  AlertCircle,
-} from 'lucide-react';
-import { db, type TranslationJob } from '../../db';
-import type { BatchExportFormat } from '../export/batchExport';
-import { getTranslatedPageThumbnailUrl } from '../canvas/thumbnailRenderer';
+import { ChevronLeft, ChevronRight, Layers, Plus } from 'lucide-react';
+import { db, type ProjectFolder, type TranslationJob } from '../../db';
+import type { HistoryLayoutMode } from '../state/historyFilter';
+import { PageRailHistoryList } from './PageRailHistoryList';
+import { PageRailProjectList, PageRailProjectPicker } from './PageRailProjectList';
 
+/** Props for the dual-mode History/Project page rail. */
 export interface PageRailProps {
-  projectId: number;
+  /** Active project; omitted means the rail starts on History and can still open projects. */
+  projectId?: number;
+  /** Preloaded history jobs; the rail queries IndexedDB when omitted. */
+  allJobs?: TranslationJob[];
+  /** Projects offered by the Project tab picker and quick assignment. */
+  projects?: ProjectFolder[];
+  /** Page currently open in the canvas. */
   activeJobId?: number;
+  /** Forces a reload after library mutations. */
+  refreshKey?: number;
+  /** Opens a page in the canvas editor. */
   onSelectPage: (jobId: number) => void;
-  onOpenAddFromLibrary: () => void;
+  /** Opens a project from the Project tab picker. */
+  onSelectProject?: (projectId: number) => void;
+  /** Opens the add-pages-from-library dialog for the active project. */
+  onOpenAddFromLibrary?: () => void;
+  /** Assigns a history page to a project from the rail. */
+  onAssignPageToProject?: (jobId: number, projectId: number) => void;
 }
 
-interface PageItem {
-  job: TranslationJob;
-  thumbUrl: string | null;
-}
+/** Rail-level tab identifiers. */
+type PageRailTab = 'history' | 'project';
 
+/**
+ * Renders the Canvas page rail: always-available History browsing plus the
+ * ordered view of the active project.
+ *
+ * @param props - Project context, history data, selection, and action callbacks.
+ * @returns Collapsible rail with History and Project tabs.
+ */
 export const PageRail: React.FC<PageRailProps> = ({
   projectId,
+  allJobs,
+  projects,
   activeJobId,
+  refreshKey = 0,
   onSelectPage,
+  onSelectProject,
   onOpenAddFromLibrary,
+  onAssignPageToProject,
 }) => {
-  const [pages, setPages] = useState<PageItem[]>([]);
+  const [activeTab, setActiveTab] = useState<PageRailTab>(projectId === undefined ? 'history' : 'project');
+  const [layoutMode, setLayoutMode] = useState<HistoryLayoutMode>('strip');
   const [isCollapsed, setIsCollapsed] = useState(false);
-  const [isExporting, setIsExporting] = useState(false);
-  const [exportMenuOpen, setExportMenuOpen] = useState(false);
+  const [historyCount, setHistoryCount] = useState(allJobs?.length ?? 0);
+  const [projectCount, setProjectCount] = useState(0);
 
   useEffect(() => {
+    setActiveTab(projectId === undefined ? 'history' : 'project');
+  }, [projectId]);
+
+  useEffect(() => {
+    if (allJobs) {
+      setHistoryCount(allJobs.length);
+      return;
+    }
     let isCancelled = false;
-
-    const loadPages = async () => {
-      const jobs = await db.translationJobs
-        .where('folderId')
-        .equals(projectId)
-        .sortBy('projectOrder');
-
-      if (isCancelled) return;
-
-      const items: PageItem[] = [];
-      for (const job of jobs) {
-        if (isCancelled) break;
-        let thumbUrl: string | null = null;
-        if (job.id) {
-          thumbUrl = await getTranslatedPageThumbnailUrl(job.id, 350);
-        }
-        items.push({ job, thumbUrl });
-      }
-
-      if (!isCancelled) {
-        setPages(items);
-      }
-    };
-
-    void loadPages();
-
+    void db.translationJobs.count().then((count) => {
+      if (!isCancelled) setHistoryCount(count);
+    }).catch(() => {
+      if (!isCancelled) setHistoryCount(0);
+    });
     return () => {
       isCancelled = true;
     };
-  }, [projectId]);
+  }, [allJobs, refreshKey]);
 
-  const handleExport = async (format: BatchExportFormat) => {
-    setExportMenuOpen(false);
-    setIsExporting(true);
-    try {
-      const { exportProjectBundle } = await import('../export/batchExport');
-      await exportProjectBundle(projectId, format);
-    } catch (err) {
-      console.error('[PageRail] Export failed:', err);
-    } finally {
-      setIsExporting(false);
+  useEffect(() => {
+    if (projectId === undefined) {
+      setProjectCount(0);
+      return;
     }
-  };
+    let isCancelled = false;
+    void db.translationJobs.where('folderId').equals(projectId).count().then((count) => {
+      if (!isCancelled) setProjectCount(count);
+    }).catch(() => {
+      if (!isCancelled) setProjectCount(0);
+    });
+    return () => {
+      isCancelled = true;
+    };
+  }, [projectId, refreshKey]);
+
+  const activeCount = activeTab === 'history' ? historyCount : projectCount;
+  const railWidth = activeTab === 'history' && layoutMode === 'grid' ? 'w-72' : 'w-48';
 
   if (isCollapsed) {
     return (
@@ -97,7 +105,7 @@ export const PageRail: React.FC<PageRailProps> = ({
           <ChevronRight className="w-4 h-4" />
         </button>
         <div className="[writing-mode:vertical-rl] rotate-180 text-xs font-semibold text-slate-400 tracking-wider">
-          {pages.length} Pages
+          {activeCount} Pages
         </div>
         <div />
       </div>
@@ -105,22 +113,23 @@ export const PageRail: React.FC<PageRailProps> = ({
   }
 
   return (
-    <aside className="w-48 h-full bg-[#12141c] border border-[#262a3b] rounded-xl shadow-2xl flex flex-col justify-between overflow-hidden shrink-0 z-30 select-none">
-      {/* Top Header */}
-      <div className="h-9 px-3 border-b border-[#262a3b] bg-[#141724] flex items-center justify-between shrink-0">
-        <div className="flex items-center gap-1.5 text-xs font-bold text-slate-300">
-          <Layers className="w-3.5 h-3.5 text-[#60c1e5]" />
-          <span>Pages ({pages.length})</span>
+    <aside className={`${railWidth} h-full bg-[#12141c] border border-[#262a3b] rounded-xl shadow-2xl flex flex-col overflow-hidden shrink-0 z-30 select-none transition-[width]`}>
+      <div className="h-9 px-2 border-b border-[#262a3b] bg-[#141724] flex items-center justify-between shrink-0">
+        <div className="flex items-center gap-1.5 text-xs font-bold text-slate-300 min-w-0">
+          <Layers className="w-3.5 h-3.5 text-[#60c1e5] shrink-0" />
+          <span>Pages ({activeCount})</span>
         </div>
         <div className="flex items-center gap-1">
-          <button
-            type="button"
-            onClick={onOpenAddFromLibrary}
-            className="p-1 rounded-md text-[#60c1e5] hover:text-white hover:bg-[#005a9c] transition cursor-pointer"
-            title="Add pages from library"
-          >
-            <Plus className="w-3.5 h-3.5" />
-          </button>
+          {activeTab === 'project' && projectId !== undefined && onOpenAddFromLibrary && (
+            <button
+              type="button"
+              onClick={onOpenAddFromLibrary}
+              className="p-1 rounded-md text-[#60c1e5] hover:text-white hover:bg-[#005a9c] transition cursor-pointer"
+              title="Add pages from library"
+            >
+              <Plus className="w-3.5 h-3.5" />
+            </button>
+          )}
           <button
             type="button"
             onClick={() => setIsCollapsed(true)}
@@ -132,106 +141,59 @@ export const PageRail: React.FC<PageRailProps> = ({
         </div>
       </div>
 
-      {/* Pages List */}
-      <div className="flex-1 overflow-y-auto p-2.5 flex flex-col gap-2">
-        {pages.map(({ job, thumbUrl }, index) => {
-          const isActive = job.id === activeJobId;
-          const isDone = job.status === 'completed';
-          const isError = job.status === 'error';
-
-          return (
-            <div
-              key={job.id}
-              onClick={() => job.id && onSelectPage(job.id)}
-              className={`group relative flex items-center gap-2 p-1.5 rounded-lg border cursor-pointer transition ${
-                isActive
-                  ? 'bg-[#005a9c]/15 border-[#60c1e5] ring-1 ring-[#60c1e5]/30 shadow-sm'
-                  : 'bg-[#161924] border-[#262a3b] hover:border-slate-500'
-              }`}
-            >
-              {/* Thumbnail */}
-              <div className="w-10 h-14 rounded bg-[#090a0f] border border-[#262a3b] overflow-hidden shrink-0 flex items-center justify-center">
-                {thumbUrl ? (
-                  <img src={thumbUrl} alt="" className="w-full h-full object-cover" />
-                ) : (
-                  <ImageIcon className="w-4 h-4 text-slate-600" />
-                )}
-              </div>
-
-              {/* Page Number & Status */}
-              <div className="flex flex-col min-w-0 flex-1">
-                <div className="flex items-center justify-between text-xs font-semibold text-slate-200">
-                  <span className="truncate">{job.pageName || `P.${index + 1}`}</span>
-                  {isDone ? (
-                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-                  ) : isError ? (
-                    <AlertCircle className="w-3.5 h-3.5 text-red-400 shrink-0" />
-                  ) : (
-                    <Clock className="w-3.5 h-3.5 text-slate-500 shrink-0" />
-                  )}
-                </div>
-                <span className="text-[0.65rem] text-slate-500 truncate mt-0.5">#{job.id}</span>
-              </div>
-            </div>
-          );
-        })}
-
-        {pages.length === 0 && (
-          <div className="h-full flex flex-col items-center justify-center text-center p-4 text-xs text-slate-500">
-            <Layers className="w-6 h-6 mb-1 opacity-40 text-slate-600" />
-            <span>No pages in this project.</span>
-            <button
-              type="button"
-              onClick={onOpenAddFromLibrary}
-              className="mt-2 text-xs text-[#60c1e5] hover:underline font-semibold cursor-pointer"
-            >
-              + Add pages
-            </button>
-          </div>
-        )}
+      <div className="px-1.5 py-1.5 border-b border-[#262a3b] bg-[#141724] shrink-0">
+        <div role="tablist" aria-label="Page rail view" className="flex items-center p-0.5 rounded-md bg-[#090a0f] border border-[#262a3b]">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeTab === 'history'}
+            onClick={() => setActiveTab('history')}
+            className={`flex-1 px-2 py-1 rounded text-[0.65rem] font-semibold transition cursor-pointer ${
+              activeTab === 'history' ? 'bg-[#005a9c] text-white' : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            History
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeTab === 'project'}
+            onClick={() => setActiveTab('project')}
+            className={`flex-1 px-2 py-1 rounded text-[0.65rem] font-semibold transition cursor-pointer ${
+              activeTab === 'project' ? 'bg-[#005a9c] text-white' : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            Project
+          </button>
+        </div>
       </div>
 
-      {/* Bottom Export Bar */}
-      <div className="p-2 border-t border-[#262a3b] bg-[#141724] relative shrink-0">
-        <button
-          type="button"
-          disabled={pages.length === 0 || isExporting}
-          onClick={() => setExportMenuOpen((v) => !v)}
-          className="w-full flex items-center justify-center gap-1.5 py-1.5 px-2 text-xs font-semibold rounded-lg bg-[#181a26] hover:bg-[#202436] disabled:opacity-40 text-slate-200 transition border border-[#262a3b] cursor-pointer"
-        >
-          <Download className="w-3.5 h-3.5 text-slate-400" />
-          <span>{isExporting ? 'Exporting...' : 'Export All'}</span>
-        </button>
-
-        {exportMenuOpen && (
-          <div className="absolute bottom-full left-2 right-2 mb-1 bg-[#161924] border border-[#262a3b] rounded-lg shadow-xl z-50 py-1 text-xs text-slate-200">
-            <button
-              type="button"
-              onClick={() => handleExport('images')}
-              className="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-[#262a3b] transition text-left cursor-pointer"
-            >
-              <Download className="w-3 h-3 text-[#60c1e5]" />
-              <span>Standard ZIP</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => handleExport('cbz')}
-              className="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-[#262a3b] transition text-left cursor-pointer"
-            >
-              <FileText className="w-3 h-3 text-emerald-400" />
-              <span>Comic CBZ</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => handleExport('psd')}
-              className="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-[#262a3b] transition text-left cursor-pointer"
-            >
-              <FileCode className="w-3 h-3 text-[#60c1e5]" />
-              <span>Layered PSD</span>
-            </button>
-          </div>
-        )}
-      </div>
+      {activeTab === 'history' ? (
+        <PageRailHistoryList
+          allJobs={allJobs}
+          projects={projects}
+          activeJobId={activeJobId}
+          refreshKey={refreshKey}
+          layoutMode={layoutMode}
+          onLayoutModeChange={setLayoutMode}
+          onSelectPage={onSelectPage}
+          onAssignPageToProject={onAssignPageToProject}
+        />
+      ) : projectId !== undefined ? (
+        <PageRailProjectList
+          projectId={projectId}
+          activeJobId={activeJobId}
+          refreshKey={refreshKey}
+          onSelectPage={onSelectPage}
+          onOpenAddFromLibrary={onOpenAddFromLibrary}
+        />
+      ) : (
+        <PageRailProjectPicker
+          projects={projects ?? []}
+          onSelectProject={onSelectProject}
+          onBrowseHistory={() => setActiveTab('history')}
+        />
+      )}
     </aside>
   );
 };
