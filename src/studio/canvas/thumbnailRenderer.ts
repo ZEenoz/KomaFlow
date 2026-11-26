@@ -23,7 +23,7 @@ function toSafeBlob(blob: unknown): Blob {
  * @param blob - Image raster blob.
  * @returns Resolves with loaded HTMLImageElement.
  */
-function loadImageFromBlob(blob: Blob): Promise<HTMLImageElement> {
+export function loadImageFromBlob(blob: Blob): Promise<HTMLImageElement> {
   const safeBlob = toSafeBlob(blob);
   return new Promise((resolve, reject) => {
     const url = URL.createObjectURL(safeBlob);

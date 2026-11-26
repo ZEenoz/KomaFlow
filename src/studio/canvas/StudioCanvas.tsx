@@ -36,7 +36,8 @@ import { StudioSourceSampler } from './StudioSourceSampler';
 import { ToolViewModePolicy } from './tools/ToolViewModePolicy';
 import { requestStudioInpaint, requestStudioOcr } from '../bridge/offscreenStudioBridge';
 import { computeRotatedBounds, getHandleCursor } from './transformMath';
-import { applyTextObjectUpdates, prepareInitialTextObject, CJK_CHARACTER_REGEX, FONT_SIZE_SLIDER_MAX, getTypesetMeasureContext, resetContourFitMemo } from './studioTypeset';
+import { applyBoxTypographyUpdate, applyTextObjectUpdates, prepareInitialTextObject, CJK_CHARACTER_REGEX, FONT_SIZE_SLIDER_MAX, getTypesetMeasureContext, resetContourFitMemo } from './studioTypeset';
+import { resolveTypesetMode } from './typesetModes';
 import { unwrapWrappedText } from '../../offscreen/utils/typography';
 import {
   canUseContourEditorGeometry, charIndexFromPoint, computeContourEditorGeometry,
@@ -142,6 +143,13 @@ export const StudioCanvas: React.FC<StudioCanvasProps> = ({
 
   const imageWidth = originalImage?.naturalWidth || cleanedImage?.naturalWidth || 800;
   const imageHeight = originalImage?.naturalHeight || cleanedImage?.naturalHeight || 1200;
+
+  // A character selection belongs to exactly one box. Switching or clearing the selected box
+  // must drop it, otherwise Bold/Italic act on a range the user can no longer see.
+  useEffect(() => {
+    setInlineSelection(null);
+    studioStore.setState({ inlineSelection: null });
+  }, [selectedTextId]);
 
   // Initialize and redraw background canvases
   useEffect(() => {
@@ -386,7 +394,13 @@ export const StudioCanvas: React.FC<StudioCanvasProps> = ({
     const prev = [...liveTexts];
     // Pasted styling must not replace the target's chosen editing engine.
     const { typesetMode: _clipboardMode, ...style } = clipboardStyle;
-    const updated = applyTextObjectUpdates(target, style, studioStore.getState().globalTypesetMode);
+    const globalMode = studioStore.getState().globalTypesetMode;
+    // Shared helper keeps this path identical to the inspector: box-wide fields clear their
+    // per-character overrides, and Balanced Fit auto-fits instead of freezing the copied size.
+    const destinationMode = resolveTypesetMode(target, target.typesetMode ?? globalMode);
+    const updated = applyBoxTypographyUpdate(target, style, globalMode, {
+      pinFontSize: destinationMode !== 'balloon',
+    });
 
     const next = liveTexts.map((t) => (t.id === selectedTextId ? updated : t));
     studioStore.setState({ textObjects: next });
@@ -1442,7 +1456,9 @@ export const StudioCanvas: React.FC<StudioCanvasProps> = ({
         });
       }
     }
-    studioStore.setState({ editingTextId: null });
+    // Clear both copies: the local one drives the floating toolbar, the store one drives the
+    // inspector; a stale box id there would keep formatting a finished edit session.
+    studioStore.setState({ editingTextId: null, inlineSelection: null });
   };
 
   const handleAddNewEmptyTextBox = () => {

@@ -268,6 +268,26 @@ describe('TextRenderer Rich Text (charStyles)', () => {
     expect(ctx.font).toContain('15.5px');
   });
 
+  it('honors left, center, and right alignment inside a positioned chord', () => {
+    /** Paints one 3-glyph line in a 100px chord at x=10 and returns the painted x. */
+    const paintedX = (align?: TextObject['align']): number => {
+      const ctx = createMockContext();
+      TextRenderer.renderText(ctx, {
+        id: `positioned-${align ?? 'default'}`, x: 0, y: 0, width: 200, height: 100,
+        text: 'ABC', lines: ['ABC'], align,
+        positionedLines: [{ text: 'ABC', x: 10, y: 6, width: 100, height: 20 }],
+        fontSize: 16, fontFamily: 'sans-serif', color: '#000',
+      });
+      return vi.mocked(ctx.fillText).mock.calls[0][1] as number;
+    };
+    // Mock measureText is 8px per glyph: line width 24 in a 100px chord starting at x=10.
+    expect(paintedX('left')).toBe(10);
+    expect(paintedX('right')).toBe(86);
+    expect(paintedX('center')).toBe(48);
+    // Missing alignment keeps the pre-existing centered default.
+    expect(paintedX(undefined)).toBe(48);
+  });
+
   it('keeps the positioned scanline path for styled runs instead of rectangular fallback', () => {
     const ctx = createMockContext();
     // One oversized styled span previously forced the whole block back to rectangular

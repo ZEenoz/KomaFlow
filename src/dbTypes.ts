@@ -1,4 +1,5 @@
 import type { TypesetMode } from './shared/constants';
+import type { CharStyleOverride } from './studio/types';
 
 /** Lifecycle states a translation job can report while it is queued or running. */
 export type JobStatus = 'queued' | 'downloading' | 'processing' | 'completed' | 'error';
@@ -128,11 +129,51 @@ export interface TextBlock {
   /** Organic bubble contour relative to (posX, posY) for scanline contour typesetting in Studio. */
   contourPoints?: Array<{ x: number; y: number }>;
   /** Koharu scanline placements (box-local) so Studio paints the exact baked layout before any edit. */
-  positionedLines?: Array<{ text: string; x: number; y: number; width: number; height: number }>;
+  positionedLines?: Array<{ text: string; x: number; y: number; width: number; height: number; baseline?: number }>;
+  /** Whether text was seeded from generated layout lines rather than user-authored line breaks. */
+  textFromGeneratedLines?: boolean;
   /** Whether the glyphs are bold. */
   bold?: boolean;
   /** Whether the glyphs are italic. */
   italic?: boolean;
+  /** Outline stroke width in pixels; restored as 2 when an older record omits it. */
+  strokeWidth?: number;
+  /** Forces the rendered glyphs to uppercase. */
+  uppercase?: boolean;
+  /** Forces the rendered glyphs to lowercase; uppercase wins when both are set. */
+  lowercase?: boolean;
+  /** Extra tracking in pixels between glyphs. */
+  letterSpacing?: number;
+  /** Whole-block opacity (0–1) applied while painting. */
+  opacity?: number;
+  /** Target language code that selects hyphenation and wrapping rules. */
+  targetLang?: string;
+  /** Per-character typography overrides; null slots inherit the block-wide style. */
+  charStyles?: (CharStyleOverride | null)[];
+  /** Second stop of the text fill gradient. */
+  color2?: string;
+  /** Whether the fill uses a linear gradient from color to color2. */
+  isGradient?: boolean;
+  /** Gradient angle in degrees. */
+  gradientAngle?: number;
+  /** Second stop of the outline gradient. */
+  strokeColor2?: string;
+  /** Whether the outline uses a linear gradient from strokeColor to strokeColor2. */
+  isStrokeGradient?: boolean;
+  /** Outline shadow color. */
+  shadowColor?: string;
+  /** Outline shadow blur radius in pixels. */
+  shadowBlur?: number;
+  /** Outline shadow angle in degrees, paired with shadowDistance. */
+  shadowAngle?: number;
+  /** Outline shadow distance in pixels along shadowAngle. */
+  shadowDistance?: number;
+  /** Bubble background fill color; 'transparent' disables the box. */
+  backgroundFill?: string;
+  /** Background box padding in pixels. */
+  backgroundPadding?: number;
+  /** Background box corner radius in pixels. */
+  backgroundBorderRadius?: number;
   /** Horizontal alignment inside the block. */
   align?: 'left' | 'center' | 'right';
   /** Marks a block the renderer must not paint. */

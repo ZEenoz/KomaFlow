@@ -161,6 +161,22 @@ describe('TypographySettings editing intent and reflow', () => {
     expect(measureDefaultLayout).toHaveBeenCalledTimes(1);
   });
 
+  it('toggles Bold OFF in Global Editing when no box is selected', async () => {
+    studioStore.setState({
+      globalEditMode: true,
+      selectedTextId: null,
+      textObjects: [makeObject('first', { bold: true }), makeObject('second', { bold: true })],
+    });
+    await render();
+    const boldButton = Array.from(container.querySelectorAll('button'))
+      .find((button) => button.title === 'Bold');
+    expect(boldButton?.className).toContain('text-[#60c1e5]');
+    await click('Bold');
+    expect(studioStore.getState().textObjects.every((object) => object.bold === false)).toBe(true);
+    expect(Array.from(container.querySelectorAll('button'))
+      .find((button) => button.title === 'Bold')?.className).not.toContain('text-[#60c1e5]');
+  });
+
   it.each(['Bold', 'Italic', 'Uppercase'])('reflows actual %s edits through Balanced Fit', async (label) => {
     await render();
     await click(label);

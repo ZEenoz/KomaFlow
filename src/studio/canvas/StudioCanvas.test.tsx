@@ -6,9 +6,10 @@ import { studioStore } from '../state/studioStore';
 import { studioUndoStack } from '../state/undoStack';
 import type { TextObject } from '../types';
 
-const layout = vi.hoisted(() => ({ apply: vi.fn(), prepare: vi.fn() }));
+const layout = vi.hoisted(() => ({ apply: vi.fn(), applyBox: vi.fn(), prepare: vi.fn() }));
 vi.mock('./studioTypeset', () => ({
   applyTextObjectUpdates: layout.apply,
+  applyBoxTypographyUpdate: layout.applyBox,
   prepareInitialTextObject: layout.prepare,
   CJK_CHARACTER_REGEX: /[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]/,
   // No shared measure context in this suite: the contour selection overlay stays disabled
@@ -28,6 +29,8 @@ const object: TextObject = {
 beforeEach(() => {
   (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
   layout.apply.mockReset().mockImplementation((current: TextObject, updates: Partial<TextObject>) =>
+    ({ ...current, ...updates, lines: ['edited layout'] }));
+  layout.applyBox.mockReset().mockImplementation((current: TextObject, updates: Partial<TextObject>) =>
     ({ ...current, ...updates, lines: ['edited layout'] }));
   layout.prepare.mockReset().mockImplementation((current: TextObject) => ({ ...current, lines: ['canonical layout'] }));
   vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockImplementation((() => ({
@@ -96,10 +99,13 @@ describe('Studio canvas layout routing', () => {
     expect(studioStore.getState().textObjects[0].charStyles?.[0]).toEqual({ [key === 'b' ? 'bold' : 'italic']: true });
   });
 
-  it('pastes style without replacing target editing engine', () => {
+  it('pastes style through the shared box helper without replacing target editing engine', () => {
     act(() => studioStore.setState({ clipboardStyle: { fontSize: 24, typesetMode: 'balloon' } }));
     act(() => shortcut('v', window, true));
-    expect(layout.apply).toHaveBeenCalledWith(object, { fontSize: 24 }, 'simple');
+    // Shared helper clears conflicting charStyles; Caption Box keeps the pasted explicit size.
+    expect(layout.applyBox).toHaveBeenCalledWith(object, { fontSize: 24 }, 'simple', { pinFontSize: true });
+    expect(studioStore.getState().textObjects[0].typesetMode).toBeUndefined();
+    expect(studioStore.getState().textObjects[0].fontSize).toBe(24);
   });
 
   it('prepares manual text boxes before paint without stamping global editing mode', () => {

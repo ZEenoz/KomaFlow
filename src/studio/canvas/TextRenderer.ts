@@ -121,7 +121,7 @@ export class TextRenderer {
 
   /**
    * Paints lines at their solver-provided scanline placements, replicating the bake's
-   * per-line math (line centered within its contour chord) so the editor shows the exact
+   * per-line math (line aligned within its contour chord) so the editor shows the exact
    * baked layout until the user re-typesets. Placement y is the ink-top coordinate;
    * when a solver supplies an alphabetic frame-local baseline, paint at that baseline
    * with textBaseline='alphabetic' instead of recomputing pitch from font size.
@@ -142,12 +142,12 @@ export class TextRenderer {
     for (let i = 0; i < lines.length; i++) {
       const pl = pls[i];
       if (hasCharStyles) {
-        // Styled runs keep their per-character fonts but center within the same scanline
+        // Styled runs keep their per-character fonts but align within the same scanline
         // chord as the uniform path, so a sized range reflows inside the contour instead
         // of falling back to full-width rectangular layout.
         const runs = this.decomposeLineIntoStyledRuns(ctx, lines[i], globalCharOffset, obj);
         const totalLineWidth = runs.reduce((sum, r) => sum + r.width, 0);
-        const startX = pl.x + (pl.width - totalLineWidth) / 2;
+        const startX = this.positionedLineStartX(pl, totalLineWidth, obj.align);
         // Resolve the alphabetic baseline (or ink-top fallback) once for the whole line;
         // the run painters inherit the ambient textBaseline.
         ctx.textBaseline = pl.baseline !== undefined ? 'alphabetic' : 'top';
@@ -166,7 +166,7 @@ export class TextRenderer {
         }
       } else {
         const lineWidth = ctx.measureText(lines[i]).width;
-        const x = pl.x + (pl.width - lineWidth) / 2;
+        const x = this.positionedLineStartX(pl, lineWidth, obj.align);
         if (pl.baseline !== undefined) {
           ctx.textBaseline = 'alphabetic';
           this.strokeAndFillText(ctx, lines[i], x, pl.baseline, obj);
@@ -177,6 +177,25 @@ export class TextRenderer {
       }
       globalCharOffset += lines[i].length + 1;
     }
+  }
+
+  /**
+   * Horizontal start for a line painted inside one scanline placement.
+   * Keeps the pre-existing centered math as the default for undefined alignment.
+   *
+   * @param pl - Solver placement whose chord owns the line.
+   * @param lineWidth - Measured width of the line or the sum of its styled runs.
+   * @param align - Object alignment; undefined keeps the centered default.
+   * @returns Local x coordinate where painting starts.
+   */
+  private static positionedLineStartX(
+    pl: NonNullable<TextObject['positionedLines']>[number],
+    lineWidth: number,
+    align: TextObject['align']
+  ): number {
+    if (align === 'left') return pl.x;
+    if (align === 'right') return pl.x + (pl.width - lineWidth);
+    return pl.x + (pl.width - lineWidth) / 2;
   }
 
   private static drawBackgroundBox(ctx: CanvasRenderingContext2D, obj: TextObject): void {

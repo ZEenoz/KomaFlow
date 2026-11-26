@@ -106,6 +106,24 @@ describe('Studio layout ownership', () => {
     expect(pinnedUp.lines).not.toEqual(pinnedDown.lines);
   });
 
+  it('pins Balanced Fit to a dragged font size so the Size slider holds its value', () => {
+    const pinned = recalculateBlockTypeset(object.text, 'sans-serif', 200, 150, 16, 'balloon', {}, 30);
+    expect(pinned.fontSize).toBe(30);
+    const updated = applyTextObjectUpdates({ ...object, typesetMode: 'balloon' as const }, { fontSize: 30 }, 'balloon');
+    expect(updated.fontSize).toBe(30);
+  });
+
+  it('restores original casing when the Caption Box uppercase toggle turns off', () => {
+    const mixed = { ...object, text: 'MiXeD Case', lines: undefined };
+    const upper = applyTextObjectUpdates(mixed, { uppercase: true }, 'simple');
+    expect(upper.lines?.join(' ')).toBe('MIXED CASE');
+    // Persisted lines matched the source case-insensitively; without invalidation Caption Box
+    // would keep painting the old uppercase lines after the toggle is switched off.
+    const restored = applyTextObjectUpdates(upper, { uppercase: false }, 'simple');
+    expect(restored.lines?.join(' ')).toBe('MiXeD Case');
+    expect(restored.text).toBe('MiXeD Case');
+  });
+
   it('keeps contour auto-fit when no manual size pin is supplied', () => {
     const contourStyle = { borderRadius: 0 };
     const auto = recalculateBlockTypeset(object.text, 'sans-serif', 200, 150, 16, 'contour', contourStyle);
@@ -166,16 +184,31 @@ describe('Studio Algorithmic Typeset & Line Reflow', () => {
     expect(res.lines).toEqual(['Hello']);
   });
 
-  it('reflows dialogue containing soft newlines when stretched wide', () => {
+  it('reflows pipeline-generated soft newlines when stretched wide', () => {
     const textWithNewlines = 'How\nabout\nplaying\nBabu\nBabu\ngame?';
+    // Persisted pipeline lines are soft wraps; only authored text keeps newlines hard.
+    const generated = { textFromGeneratedLines: true };
     // Tall and narrow (80 x 300)
-    const tall = recalculateBlockTypeset(textWithNewlines, 'WildWords', 80, 300, 16);
+    const tall = recalculateBlockTypeset(textWithNewlines, 'WildWords', 80, 300, 16, 'balloon', generated);
     expect(tall.lines.length).toBeGreaterThanOrEqual(4);
 
     // Stretched wide (450 x 100) -> should reflow into fewer lines (1 or 2 lines)
-    const wide = recalculateBlockTypeset(textWithNewlines, 'WildWords', 450, 100, 16);
+    const wide = recalculateBlockTypeset(textWithNewlines, 'WildWords', 450, 100, 16, 'balloon', generated);
     expect(wide.lines.length).toBeLessThan(tall.lines.length);
     expect(wide.lines.length).toBeLessThanOrEqual(2);
+  });
+
+  it('keeps every authored newline as a hard line in Balanced Fit', () => {
+    // Exact Studio screenshot case: line 1 must end at "ถ้าพวกเขาเห็นท่า" and line 2 must
+    // start with "ทางแปลกๆ" even though the box is wide enough to join them.
+    const authored = 'ถ้าพวกเขาเห็นท่า\nทางแปลกๆ จะทำยังไงดี!';
+    const layout = recalculateBlockTypeset(authored, 'sans-serif', 600, 300, 16);
+    expect(layout.lines[0]).toBe('ถ้าพวกเขาเห็นท่า');
+    expect(layout.lines[1]?.startsWith('ทางแปลกๆ')).toBe(true);
+    expect(layout.lines[1]).not.toContain('ถ้าพวกเขาเห็นท่า');
+    // Pinned size keeps the authored break AND lets each signed line stay whole.
+    const pinned = recalculateBlockTypeset(authored, 'sans-serif', 600, 300, 16, 'balloon', {}, 18);
+    expect(pinned.lines).toEqual(['ถ้าพวกเขาเห็นท่า', 'ทางแปลกๆ จะทำยังไงดี!']);
   });
 
   it('un-hyphenates soft line-break syllables when box is widened in Auto Balloon and Simple Wrap', () => {
@@ -442,6 +475,24 @@ describe('live resize contour refit', () => {
     const moved = applyTextObjectUpdates({ ...object, typesetMode: 'contour', contourPoints: chamber() }, { x: 40, y: 30 });
     expect(moved.lines).toBe(object.lines);
     expect(moved.fontSize).toBe(object.fontSize);
+  });
+
+  it('keeps authored newlines in Bubble Contour across subsequent font size reflows', () => {
+    resetContourFitMemo();
+    const contourBox: TextObject = {
+      ...object,
+      width: 240,
+      height: 150,
+      typesetMode: 'contour',
+      contourPoints: chamber(1.2),
+    };
+    const authored = applyTextObjectUpdates(contourBox, { text: 'First thought\nSecond thought' }, 'contour');
+    expect(authored.textFromGeneratedLines).toBe(false);
+    expect(authored.lines?.length).toBeGreaterThanOrEqual(2);
+    // Second reflow (e.g. font size tweak) must NOT merge the authored newline.
+    const resized = applyTextObjectUpdates(authored, { fontSize: 14 }, 'contour');
+    expect(resized.lines?.length).toBeGreaterThanOrEqual(2);
+    expect(resized.lines?.some((line) => line.includes('thought Second'))).toBe(false);
   });
 });
 

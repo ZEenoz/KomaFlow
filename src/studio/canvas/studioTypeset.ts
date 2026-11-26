@@ -3,11 +3,31 @@ import { generateBubbleContour, wrapTextContour, MINIMUM_READABLE_FONT_SIZE } fr
 import { wrapRectangular } from '../../offscreen/utils/ellipseTypeset';
 import { unwrapWrappedText } from '../../offscreen/utils/typography';
 import type { TypesetMode } from '../../shared/constants';
-import type { TextObject } from '../types';
+import type { CharStyleOverride, TextObject } from '../types';
 import { recordGeneratedLayout } from '../state/layoutGenerations';
 import { resolveTypesetMode } from './typesetModes';
 
 export type StudioTypesetMode = TypesetMode;
+
+/** Box-wide typography fields whose update must clear matching per-character overrides. */
+export const SELECTION_ELIGIBLE_KEYS: (keyof CharStyleOverride)[] = [
+  'bold',
+  'italic',
+  'fontFamily',
+  'fontSize',
+  'color',
+  'strokeColor',
+  'strokeWidth',
+];
+
+/** Layout options for one {@link applyTextObjectUpdates} call. */
+export interface ApplyTextObjectOptions {
+  /**
+   * Pin the typed size through the solver. Defaults to true for explicit font-size edits;
+   * text-box paste turns it off for Balanced Fit so the target bubble auto-fits the pasted style.
+   */
+  pinFontSize?: boolean;
+}
 
 type TypesetStyle = Pick<TextObject, 'bold' | 'italic' | 'letterSpacing' | 'lineSpacing' | 'isVertical' | 'borderRadius' | 'targetLang' | 'contourPoints' | 'lines' | 'uppercase' | 'lowercase'> &
   Pick<TextObject, 'textFromGeneratedLines'>;
@@ -192,13 +212,15 @@ function fitCaptionLines(
  * @param updates - Partial text, geometry, typography, or paint edit.
  * @param globalMode - Editing fallback when object has no engine preference.
  * @param chosenMode - Optional mode explicitly selected for this edit.
+ * @param options - Layout options for this edit.
  * @returns Updated object, retaining layout for mode-only and paint-only edits.
  */
 export function applyTextObjectUpdates(
   object: TextObject,
   updates: Partial<TextObject>,
   globalMode: StudioTypesetMode = 'balloon',
-  chosenMode?: StudioTypesetMode
+  chosenMode?: StudioTypesetMode,
+  options?: ApplyTextObjectOptions
 ): TextObject {
   if ((Object.keys(updates) as (keyof TextObject)[]).every((key) => object[key] === updates[key])) {
     return object;
@@ -209,6 +231,15 @@ export function applyTextObjectUpdates(
   // Caption Box would keep the previous word-to-line structure for entirely new text.
   if (updates.text !== undefined) {
     updated.textFromGeneratedLines = false;
+    updated.lines = undefined;
+    updated.positionedLines = undefined;
+  }
+  // Caption Box trusts persisted lines whenever they match the text case-insensitively, so a
+  // casing toggle would keep painting the previous casing. Drop them and re-measure both casing
+  // flags from the untouched source text.
+  const casingChanged = (updates.uppercase !== undefined && updates.uppercase !== object.uppercase)
+    || (updates.lowercase !== undefined && updates.lowercase !== object.lowercase);
+  if (casingChanged) {
     updated.lines = undefined;
     updated.positionedLines = undefined;
   }
@@ -224,7 +255,9 @@ export function applyTextObjectUpdates(
     }
     return object[field] !== updated[field];
   })) return updated;
-  const pinnedFontSize = updates.fontSize !== undefined && updates.fontSize !== object.fontSize
+  const pinnedFontSize = options?.pinFontSize !== false
+    && updates.fontSize !== undefined
+    && updates.fontSize !== object.fontSize
     ? updates.fontSize
     : undefined;
   // Engine availability is decided from detected bubble evidence, not from the current mode:
@@ -234,6 +267,45 @@ export function applyTextObjectUpdates(
     updated,
     resolveTypesetMode(updated, chosenMode ?? updated.typesetMode ?? globalMode),
     pinnedFontSize
+  );
+}
+
+/**
+ * Applies box-wide typography fields, removing conflicting character overrides.
+ * Shared by the inspector and the floating toolbar so both paste paths clear the same
+ * `charStyles` entries (a box-wide font must not lose to a stale per-character override).
+ *
+ * @param object - Existing text box and its per-character styling.
+ * @param partial - Typography fields changed by the user.
+ * @param globalMode - Editing default used when the box has no local mode.
+ * @param options - Layout options forwarded to {@link applyTextObjectUpdates}.
+ * @returns Updated box, reflowed only when its layout-affecting values change.
+ */
+export function applyBoxTypographyUpdate(
+  object: TextObject,
+  partial: Partial<TextObject>,
+  globalMode: StudioTypesetMode,
+  options?: ApplyTextObjectOptions
+): TextObject {
+  // Object-wide update: if changing a property box-wide, clear overrides for that property.
+  let updatedCharStyles = object.charStyles ? [...object.charStyles] : undefined;
+  if (updatedCharStyles?.some(Boolean)) {
+    updatedCharStyles = updatedCharStyles.map((style) => {
+      if (!style) return null;
+      const copy = { ...style };
+      for (const key of SELECTION_ELIGIBLE_KEYS) {
+        if (key in partial) delete copy[key];
+      }
+      return Object.keys(copy).length > 0 ? copy : null;
+    });
+    if (!updatedCharStyles.some(Boolean)) updatedCharStyles = undefined;
+  }
+  return applyTextObjectUpdates(
+    object,
+    { ...partial, charStyles: updatedCharStyles },
+    globalMode,
+    undefined,
+    options
   );
 }
 
@@ -586,11 +658,12 @@ export function recalculateBlockTypeset(
     // Contour Mode: Koharu 2D scanline ray-casting on bubble polygon or curved contour (Route 2)
     if (mode === 'contour') {
       // Any object that already owns measured lines is running generated layout, even when an
-      // older Studio OCR path forgot the provenance marker. Bubble Contour must re-break those
-      // words on resize instead of treating the previous line breaks as authored.
-      const sourceText = style.lines?.length
-        ? unwrapWrappedText(text)
-        : resolveTypesetSource(text, style);
+      // older Studio OCR path forgot the provenance marker. User-authored edits explicitly
+      // mark `textFromGeneratedLines === false` and must keep their mandatory line breaks
+      // across subsequent size/font reflows.
+      const sourceText = style.textFromGeneratedLines === false
+        ? resolveTypesetSource(text, style)
+        : (style.lines?.length ? unwrapWrappedText(text) : resolveTypesetSource(text, style));
       const contour = (style.contourPoints && style.contourPoints.length >= 3)
         ? style.contourPoints
         : generateBubbleContour(width, height, style.borderRadius);
@@ -639,10 +712,14 @@ export function recalculateBlockTypeset(
 
     // Auto Balloon Mode: full pipeline diamond envelopes, hyphenation, and auto font fitting
     const isList = /^\s*[-*•\d+.]/m.test(text);
-  // Marker-aware unwrapper rejoins soft line-break hyphens for the existing Auto
-  // Balloon route. Authored mandatory-break handling is scoped to contour/simple.
-  const unhyphenated = unwrapWrappedText(text);
-  const normalizedText = isList || unhyphenated.includes('\n\n')
+  // Authored line breaks are writer intent, not soft wraps: keep every one as a hard
+  // paragraph boundary. Pipeline-generated text still gets the marker-aware unwrapper and
+  // soft-break healing so resize can re-flow it.
+  const preserveAuthoredNewlines = !style.textFromGeneratedLines && text.includes('\n');
+  const unhyphenated = preserveAuthoredNewlines
+    ? text.replace(/\r\n/g, '\n')
+    : unwrapWrappedText(text);
+  const normalizedText = preserveAuthoredNewlines || isList || unhyphenated.includes('\n\n')
     ? unhyphenated
     : unhyphenated.replace(/\r?\n/g, ' ').replace(/\s+/g, ' ').trim();
 
@@ -655,6 +732,11 @@ export function recalculateBlockTypeset(
     },
     measureText(value: string): TextMetrics { return ctx.measureText(value); },
   };
+  // A manual size edit pins the solver's floor and ceiling to the same value, so the
+  // Balanced Fit slider holds the dragged size instead of snapping back to auto-fit.
+  const pinned = pinnedFontSize !== undefined
+    ? Math.max(MINIMUM_READABLE_FONT_SIZE, pinnedFontSize)
+    : undefined;
   // The shared fitter currently owns a fixed baseline advance. lineSpacing and
   // charStyles edits invalidate layout, but per-run/variable-step fitting needs
   // a shared-engine extension; do not approximate its geometry here.
@@ -664,11 +746,14 @@ export function recalculateBlockTypeset(
     width,
     height,
     fallbackSize,
-    MAX_FONT_SIZE_CEILING,
+    pinned ?? MAX_FONT_SIZE_CEILING,
     fontFamily || 'sans-serif',
     style.bold ?? false,
     undefined,
-    targetLang
+    targetLang,
+    undefined,
+    pinned,
+    preserveAuthoredNewlines
   );
 
   return {

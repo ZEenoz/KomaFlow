@@ -42,6 +42,7 @@ import {
 } from './canvas/compositeExport';
 import { StudioCanvas } from './canvas/StudioCanvas';
 import { prepareInitialTextObject } from './canvas/studioTypeset';
+import { serializeTextObject } from './state/persistedTextObjects';
 import { EraseSettings } from './tools/EraseSettings';
 import { PaintSettings } from './tools/PaintSettings';
 import { InpaintSettings } from './tools/InpaintSettings';
@@ -66,7 +67,7 @@ export interface StudioProps {
   cleanedImage: HTMLImageElement | null;
   initialTextObjects?: TextObject[];
   jobTitle?: string;
-  onSave?: (savedImageBlob: Blob, textObjects: TextObject[]) => Promise<void>;
+  onSave?: (savedImageBlob: Blob, textObjects: TextObject[], bakedImageBlob?: Blob) => Promise<void>;
   onBack?: () => void;
   /** Queues one or more uploaded pages through App's persisted full translation pipeline. */
   onUploadPage?: (files: File[]) => Promise<void>;
@@ -94,6 +95,21 @@ export interface StudioProps {
 
 // Stable fallback prevents resetting editor state on unrelated renders without initial objects.
 const EMPTY_TEXT_OBJECTS: TextObject[] = [];
+
+/**
+ * Promisifies `HTMLCanvasElement.toBlob` so a save can await both encoded pages.
+ *
+ * @param canvas - Canvas to encode as PNG.
+ * @returns Encoded PNG blob.
+ */
+function canvasToBlob(canvas: HTMLCanvasElement): Promise<Blob> {
+  return new Promise((resolve, reject) => {
+    canvas.toBlob((blob) => {
+      if (blob) resolve(blob);
+      else reject(new Error('Failed to encode page canvas'));
+    }, 'image/png');
+  });
+}
 
 const TOOLS: { id: StudioTool; label: string; icon: React.ComponentType<{ className?: string }>; shortcut: string }[] = [
   { id: 'text', label: 'Text & Typography', icon: Type, shortcut: 'T' },
@@ -209,11 +225,23 @@ export const Studio: React.FC<StudioProps> = ({
     });
   }, []);
 
-  // Reset undo history when switching manga pages or unmounting
+  // Reset undo history and transient page state when switching manga pages or unmounting.
+  // Stickers, edit sessions, and character selections belong to one page; carrying them over
+  // would format or export content from the page the user already left.
   useEffect(() => {
+    const resetTransientPageState = () => {
+      studioStore.setState({
+        imageLayers: [],
+        selectedImageLayerId: null,
+        editingTextId: null,
+        inlineSelection: null,
+      });
+    };
     studioUndoStack.clear();
+    resetTransientPageState();
     return () => {
       studioUndoStack.clear();
+      resetTransientPageState();
     };
   }, [jobId]);
 
@@ -467,29 +495,41 @@ export const Studio: React.FC<StudioProps> = ({
         bgCanvas = fallback;
       }
 
-      // ADR-005 Clean Plate: Save the clean raster artwork without baked typography.
-      // Text objects are persisted separately as structured records in db.textBlocks.
-      bgCanvas.toBlob(async (blob) => {
-        if (blob) {
-          await onSave(blob, textObjects);
-          if (jobId) {
-            try {
-              const currentColorTier = isPageColorized
-                ? (studioStore.getState().selectedColorEngineId || 'manga-colorization-v2')
-                : 'none';
-              await db.translationJobs.update(jobId, { colorTier: currentColorTier });
-            } catch (err) {
-              console.warn('[Studio] Failed to update colorTier on save:', err);
-            }
-          }
+      // ADR-005 Clean Plate: the editable background stays free of baked typography; text
+      // objects are persisted separately as structured records in db.textBlocks.
+      const liveState = studioStore.getState();
+      const cleanPlateBlob = await canvasToBlob(bgCanvas);
+      // The baked page is what the library delivers (text, warp, stickers), so the archive
+      // export and library thumbnail never have to recomposite from stale rows.
+      const bakedCanvas = renderFullCompositeCanvas(
+        imageWidth,
+        imageHeight,
+        bgCanvas,
+        originalImage,
+        'translated',
+        liveState.imageLayers,
+        liveState.textObjects
+      );
+      const bakedPageBlob = await canvasToBlob(bakedCanvas);
+
+      await onSave(cleanPlateBlob, liveState.textObjects, bakedPageBlob);
+      if (jobId) {
+        try {
+          const currentColorTier = isPageColorized
+            ? (studioStore.getState().selectedColorEngineId || 'manga-colorization-v2')
+            : 'none';
+          await db.translationJobs.update(jobId, { colorTier: currentColorTier });
+        } catch (err) {
+          console.warn('[Studio] Failed to update colorTier on save:', err);
         }
-        setIsSaving(false);
-        setToastMessage('Saved changes to library!');
-        setTimeout(() => setToastMessage(null), 3000);
-      }, 'image/png');
+      }
+      setToastMessage('Saved changes to library!');
     } catch (err) {
       console.error('[Studio] Save failed:', err);
+      setToastMessage('Failed to save changes');
+    } finally {
       setIsSaving(false);
+      setTimeout(() => setToastMessage(null), 3000);
     }
   };
 
@@ -604,10 +644,23 @@ export const Studio: React.FC<StudioProps> = ({
         pCtx.drawImage(originalImage, 0, 0, imageWidth, imageHeight);
       }
 
+      // Match the manual Re-OCR path: the retranslate run must honor the engines the user
+      // selected in Studio instead of silently falling back to popup defaults.
+      const {
+        selectedOcrEngineId,
+        selectedInpaintEngineId,
+        selectedTranslationEngineId,
+      } = studioStore.getState();
       const result = await requestStudioOcr(
         patchCanvas,
         { x: 0, y: 0, width: imageWidth, height: imageHeight },
-        { translate: true, inpaint: true }
+        {
+          ocrEngineId: selectedOcrEngineId,
+          inpaintEngineId: selectedInpaintEngineId,
+          translationEngineId: selectedTranslationEngineId,
+          translate: true,
+          inpaint: true,
+        }
       );
 
       // Staleness guard: never apply another page's retranslation to this page's
@@ -651,18 +704,22 @@ export const Studio: React.FC<StudioProps> = ({
         });
       }
 
-      // Update studio state
+      // Update studio state. The previous page's box selection, open edit session, and
+      // character range no longer address existing text, so clear them together.
       studioStore.setState({
         textObjects: result.textObjects,
+        selectedTextId: null,
+        editingTextId: null,
+        inlineSelection: null,
       });
 
       // Synchronize retranslation metadata and updated text blocks directly into IndexedDB
       if (jobId) {
         try {
           const retranslateDuration = Math.round(performance.now() - retranslateStart);
-          const currentOcrId = studioStore.getState().selectedOcrEngineId || DEFAULT_OCR_TIER_ID;
-          const currentInpaintId = studioStore.getState().selectedInpaintEngineId || 'lama-manga';
-          const currentTranslationId = studioStore.getState().selectedTranslationEngineId || 'gg-translate';
+          const currentOcrId = selectedOcrEngineId || DEFAULT_OCR_TIER_ID;
+          const currentInpaintId = selectedInpaintEngineId || 'lama-manga';
+          const currentTranslationId = selectedTranslationEngineId || 'gg-translate';
 
           await db.translationJobs.update(jobId, {
             status: 'completed',
@@ -675,35 +732,12 @@ export const Studio: React.FC<StudioProps> = ({
 
           const imageRecord = await db.images.where({ jobId }).first();
           if (imageRecord?.id) {
-            await db.textBlocks.where({ imageId: imageRecord.id }).delete();
-            const blocksToSave = result.textObjects.map((obj) => ({
-              imageId: imageRecord.id!,
-              originalText: obj.originalText || '',
-              translatedText: obj.text,
-              posX: obj.x,
-              posY: obj.y,
-              width: obj.width,
-              height: obj.height,
-              fontSize: obj.fontSize || 16,
-              fontFamily: obj.fontFamily || 'WildWords, CCWildWords, sans-serif',
-              bold: obj.bold,
-              italic: obj.italic,
-              align: obj.align,
-              color: obj.color || '#000000',
-              strokeColor: obj.strokeColor || '#ffffff',
-              direction: (obj.isVertical ? 'v' : 'h') as 'v' | 'h',
-              lines: obj.lines,
-              lineSpacing: obj.lineSpacing,
-              positionedLines: obj.positionedLines,
-              typesetMode: obj.typesetMode,
-              borderRadius: obj.borderRadius,
-              isRounded: obj.isRounded,
-              contourPoints: obj.contourPoints,
-              isSkipped: obj.isSkipped,
-              isArtwork: obj.isArtwork,
-              angle: obj.rotation ?? 0,
-            }));
-            await db.textBlocks.bulkAdd(blocksToSave);
+            await db.transaction('rw', db.textBlocks, async () => {
+              await db.textBlocks.where({ imageId: imageRecord.id! }).delete();
+              await db.textBlocks.bulkAdd(
+                result.textObjects.map((obj) => serializeTextObject(imageRecord.id!, obj))
+              );
+            });
           }
         } catch (dbErr) {
           console.warn('[Studio] Failed to sync retranslate into IndexedDB:', dbErr);

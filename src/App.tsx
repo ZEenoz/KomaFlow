@@ -29,7 +29,8 @@ import {
   type BatchUploadProgress,
 } from './shared/studioUpload';
 import { STUDIO_IMAGE_INPUT_ACCEPT } from './shared/constants';
-import { restoreTextObject } from './studio/state/persistedTextObjects';
+import { restoreTextObject, serializeTextObject } from './studio/state/persistedTextObjects';
+import { invalidateJobThumbnail } from './studio/canvas/thumbnailRenderer';
 import { useLayoutReadiness } from './studio/state/layoutReadiness';
 
 export type DragHandle = 'move' | 'nw' | 'n' | 'ne' | 'e' | 'se' | 's' | 'sw' | 'w';
@@ -466,52 +467,51 @@ export default function App() {
     }
   };
 
-  const handleSaveToDb = async (savedImageBlob: Blob, updatedObjects: TextObject[]) => {
-    if (!activeJobId || !imageRecord?.id) return;
+  /**
+   * Persists one edited page: clean plate, baked translated page, and its text blocks
+   * in one transaction. Failures propagate so Studio can report the save as failed.
+   *
+   * @param savedImageBlob - Clean inpainted plate (no baked typography).
+   * @param updatedObjects - Current editable text objects.
+   * @param bakedImageBlob - Fully composited translated page, when the caller could render it.
+   * @returns Resolves after the transaction and thumbnail invalidation.
+   */
+  const handleSaveToDb = async (
+    savedImageBlob: Blob,
+    updatedObjects: TextObject[],
+    bakedImageBlob?: Blob
+  ) => {
+    if (!activeJobId || !imageRecord?.id) {
+      throw new Error('Cannot save: no active page is loaded.');
+    }
 
     try {
       await db.transaction('rw', db.images, db.textBlocks, async () => {
-        // Update cleaned raster blob
+        // Update the clean plate and, when provided, the baked delivered page.
         await db.images.update(imageRecord.id!, {
           translatedImageBlob: savedImageBlob,
+          ...(bakedImageBlob ? { bakedImageBlob } : {}),
         });
 
         // Delete old blocks and write updated blocks
         await db.textBlocks.where({ imageId: imageRecord.id! }).delete();
-        const newBlocks: TextBlock[] = updatedObjects.map((obj) => ({
-          imageId: imageRecord.id!,
-          originalText: obj.originalText || '',
-          translatedText: obj.text,
-          posX: obj.x,
-          posY: obj.y,
-          width: obj.width,
-          height: obj.height,
-          fontSize: obj.fontSize,
-          fontFamily: obj.fontFamily,
-          bold: obj.bold,
-          italic: obj.italic,
-          align: obj.align,
-          color: obj.color,
-          strokeColor: obj.strokeColor,
-          direction: obj.isVertical ? 'v' : 'h',
-          lines: obj.lines,
-          lineSpacing: obj.lineSpacing,
-          positionedLines: obj.positionedLines,
-          typesetMode: obj.typesetMode,
-          borderRadius: obj.borderRadius,
-          isRounded: obj.isRounded,
-          contourPoints: obj.contourPoints,
-          isSkipped: obj.isSkipped,
-          isArtwork: obj.isArtwork,
-          angle: obj.rotation ?? 0,
-        }));
+        const newBlocks: TextBlock[] = updatedObjects.map((obj) =>
+          serializeTextObject(imageRecord.id!, obj)
+        );
         await db.textBlocks.bulkAdd(newBlocks);
       });
 
+      // The dashboard thumbnail was composited from the previous text; drop it so the
+      // next read reflects this save.
+      invalidateJobThumbnail(activeJobId);
+
       // Synchronize in-memory record without triggering loadJobDetails unmount/flicker
-      setImageRecord((prev) => (prev ? { ...prev, translatedImageBlob: savedImageBlob } : prev));
+      setImageRecord((prev) => (prev
+        ? { ...prev, translatedImageBlob: savedImageBlob, ...(bakedImageBlob ? { bakedImageBlob } : {}) }
+        : prev));
     } catch (err) {
       console.error('[Studio] Failed saving to database:', err);
+      throw err;
     }
   };
 
@@ -692,7 +692,7 @@ export default function App() {
                   }
                 }}
                 onBack={() => setIsLeftDrawerOpen(true)}
-                onSave={async (blob, objs) => handleSaveToDb(blob, objs)}
+                onSave={async (blob, objs, bakedBlob) => handleSaveToDb(blob, objs, bakedBlob)}
               />
             ) : (
               <div className="flex-1 flex flex-col items-center justify-center p-6 text-center">

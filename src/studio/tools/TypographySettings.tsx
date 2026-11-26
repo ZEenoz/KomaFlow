@@ -30,47 +30,16 @@ function displayFontFamily(stack: string): string {
 }
 import { studioStore, useStudioStore, extractTypographyStyle } from '../state/studioStore';
 import { studioUndoStack } from '../state/undoStack';
-import { applyTextObjectUpdates, CJK_CHARACTER_REGEX, FONT_SIZE_SLIDER_MAX, prepareInitialTextObject } from '../canvas/studioTypeset';
+import {
+  applyBoxTypographyUpdate,
+  applyTextObjectUpdates,
+  CJK_CHARACTER_REGEX,
+  FONT_SIZE_SLIDER_MAX,
+  prepareInitialTextObject,
+  SELECTION_ELIGIBLE_KEYS,
+} from '../canvas/studioTypeset';
 import { hasBubbleContour, isTypesetModeAvailable, resolveTypesetMode } from '../canvas/typesetModes';
 import type { TextObject, CharStyleOverride } from '../types';
-
-const SELECTION_ELIGIBLE_KEYS: (keyof CharStyleOverride)[] = [
-  'bold',
-  'italic',
-  'fontFamily',
-  'fontSize',
-  'color',
-  'strokeColor',
-  'strokeWidth',
-];
-
-/**
- * Applies box-wide typography fields, removing conflicting character overrides.
- * @param object Existing text box and its per-character styling.
- * @param partial Typography fields changed by the user.
- * @param globalMode Editing default used when the box has no local mode.
- * @returns Updated box, reflowed only when its layout-affecting values change.
- */
-function applyBoxTypographyUpdate(
-  object: TextObject,
-  partial: Partial<TextObject>,
-  globalMode: TypesetMode,
-): TextObject {
-  // Object-wide update: if changing a property box-wide, clear overrides for that property in charStyles
-  let updatedCharStyles = object.charStyles ? [...object.charStyles] : undefined;
-  if (updatedCharStyles?.some(Boolean)) {
-    updatedCharStyles = updatedCharStyles.map((style) => {
-      if (!style) return null;
-      const copy = { ...style };
-      for (const key of SELECTION_ELIGIBLE_KEYS) {
-        if (key in partial) delete copy[key];
-      }
-      return Object.keys(copy).length > 0 ? copy : null;
-    });
-    if (!updatedCharStyles.some(Boolean)) updatedCharStyles = undefined;
-  }
-  return applyTextObjectUpdates(object, { ...partial, charStyles: updatedCharStyles }, globalMode);
-}
 
 /** Renders typography controls; user edits reflow text, while mode choices only set editing intent. */
 export const TypographySettings: React.FC = () => {
@@ -82,6 +51,11 @@ export const TypographySettings: React.FC = () => {
   const inlineSelection = useStudioStore((s) => s.inlineSelection);
 
   const selectedObj = textObjects.find((t) => t.id === selectedTextId);
+  /**
+   * Global Editing has no single selection, so the first box provides the displayed values.
+   * Without it, Bold/Italic always read "off" and could only be switched on, never off.
+   */
+  const displayObj = selectedObj || (globalEditMode ? textObjects[0] : undefined);
   // Engine availability comes from detected bubble evidence, not from the current mode: a bubble
   // switched to Caption Box keeps its contour polygon and must stay eligible for Bubble Contour.
   const selectedHasBubbleContour = hasBubbleContour(selectedObj);
@@ -121,13 +95,13 @@ export const TypographySettings: React.FC = () => {
     ? selectedObj.charStyles[selStart]
     : null;
 
-  const effectiveBold = currentSelOverride?.bold !== undefined ? currentSelOverride.bold : Boolean(selectedObj?.bold);
-  const effectiveItalic = currentSelOverride?.italic !== undefined ? currentSelOverride.italic : Boolean(selectedObj?.italic);
-  const effectiveFontFamily = currentSelOverride?.fontFamily || selectedObj?.fontFamily || 'WildWords, CCWildWords, sans-serif';
-  const effectiveFontSize = currentSelOverride?.fontSize || selectedObj?.fontSize || 16;
-  const effectiveColor = currentSelOverride?.color || selectedObj?.color || '#000000';
-  const effectiveStrokeColor = currentSelOverride?.strokeColor || selectedObj?.strokeColor || '#ffffff';
-  const effectiveStrokeWidth = currentSelOverride?.strokeWidth !== undefined ? currentSelOverride.strokeWidth : (selectedObj?.strokeWidth || 0);
+  const effectiveBold = currentSelOverride?.bold !== undefined ? currentSelOverride.bold : Boolean(displayObj?.bold);
+  const effectiveItalic = currentSelOverride?.italic !== undefined ? currentSelOverride.italic : Boolean(displayObj?.italic);
+  const effectiveFontFamily = currentSelOverride?.fontFamily || displayObj?.fontFamily || 'WildWords, CCWildWords, sans-serif';
+  const effectiveFontSize = currentSelOverride?.fontSize || displayObj?.fontSize || 16;
+  const effectiveColor = currentSelOverride?.color || displayObj?.color || '#000000';
+  const effectiveStrokeColor = currentSelOverride?.strokeColor || displayObj?.strokeColor || '#ffffff';
+  const effectiveStrokeWidth = currentSelOverride?.strokeWidth !== undefined ? currentSelOverride.strokeWidth : (displayObj?.strokeWidth || 0);
 
   const handleCopyStyle = () => {
     if (!selectedObj) return;
@@ -143,7 +117,12 @@ export const TypographySettings: React.FC = () => {
     const prev = [...textObjects];
     // A copied appearance must not replace the destination's chosen editing engine.
     const { typesetMode: _copiedMode, ...style } = clipboardStyle;
-    const updated = applyBoxTypographyUpdate(selectedObj, style, globalTypesetMode);
+    // Balanced Fit must be free to auto-fit the pasted style to this bubble; pinning the
+    // copied size there would freeze a size that was fitted for a different box.
+    const destinationMode = resolveTypesetMode(selectedObj, selectedObj.typesetMode ?? globalTypesetMode);
+    const updated = applyBoxTypographyUpdate(selectedObj, style, globalTypesetMode, {
+      pinFontSize: destinationMode !== 'balloon',
+    });
 
     const next = textObjects.map((t) => (t.id === selectedObj.id ? updated : t));
     studioStore.setState({ textObjects: next });
@@ -299,6 +278,7 @@ export const TypographySettings: React.FC = () => {
    * @returns Nothing; writes updated dialogue layout to the store.
    */
   const handleTextChange = (newText: string) => {
+    if (!obj.id) return;
     if (!initialTextObjectsRef.current) {
       initialTextObjectsRef.current = [...textObjects];
     }
@@ -306,6 +286,18 @@ export const TypographySettings: React.FC = () => {
       t.id === obj.id ? applyTextObjectUpdates(t, { text: newText }, globalTypesetMode) : t
     );
     studioStore.setState({ textObjects: next });
+  };
+
+  /**
+   * Records the textarea character range for the displayed box.
+   * @param el - Live dialogue textarea.
+   * @returns Nothing; a box-less global view has no range to record.
+   */
+  const handleSelectionChange = (el: HTMLTextAreaElement) => {
+    if (!obj.id) return;
+    studioStore.setState({
+      inlineSelection: { textId: obj.id, start: el.selectionStart, end: el.selectionEnd },
+    });
   };
 
   const handleTextBlur = () => {
@@ -373,6 +365,7 @@ export const TypographySettings: React.FC = () => {
   };
 
   const handleUpdateOriginalText = (newOriginal: string) => {
+    if (!obj.id) return;
     const prev = [...textObjects];
     const next = textObjects.map((t) =>
       t.id === obj.id ? { ...t, originalText: newOriginal } : t
@@ -388,7 +381,7 @@ export const TypographySettings: React.FC = () => {
 
   /** Restores original OCR dialogue using current editing mode and records the resulting layout for undo. */
   const handleRevertToOriginal = () => {
-    if (!obj.originalText) return;
+    if (!obj.id || !obj.originalText) return;
     const prev = [...textObjects];
     const next = textObjects.map((t) =>
       t.id === obj.id ? applyTextObjectUpdates(t, { text: obj.originalText! }, globalTypesetMode) : t
@@ -404,6 +397,7 @@ export const TypographySettings: React.FC = () => {
 
   /** Clears dialogue and its measured lines together, preserving the editing engine preference. */
   const handleClearText = () => {
+    if (!obj.id) return;
     const prev = [...textObjects];
     const next = textObjects.map((t) =>
       t.id === obj.id ? applyTextObjectUpdates(t, { text: '' }, globalTypesetMode) : t
@@ -454,7 +448,7 @@ export const TypographySettings: React.FC = () => {
     });
   };
 
-  const obj = selectedObj || textObjects[0] || ({} as Partial<TextObject>);
+  const obj = displayObj || ({} as Partial<TextObject>);
 
   return (
     <div className="space-y-3.5 text-xs text-slate-200" data-studio-sidebar="true">
@@ -663,36 +657,9 @@ export const TypographySettings: React.FC = () => {
           value={obj.text ?? ''}
           onChange={(e) => handleTextChange(e.target.value)}
           onBlur={handleTextBlur}
-          onSelect={(e) => {
-            const el = e.target as HTMLTextAreaElement;
-            studioStore.setState({
-              inlineSelection: {
-                textId: obj.id,
-                start: el.selectionStart,
-                end: el.selectionEnd,
-              },
-            });
-          }}
-          onKeyUp={(e) => {
-            const el = e.target as HTMLTextAreaElement;
-            studioStore.setState({
-              inlineSelection: {
-                textId: obj.id,
-                start: el.selectionStart,
-                end: el.selectionEnd,
-              },
-            });
-          }}
-          onMouseUp={(e) => {
-            const el = e.target as HTMLTextAreaElement;
-            studioStore.setState({
-              inlineSelection: {
-                textId: obj.id,
-                start: el.selectionStart,
-                end: el.selectionEnd,
-              },
-            });
-          }}
+          onSelect={(e) => handleSelectionChange(e.target as HTMLTextAreaElement)}
+          onKeyUp={(e) => handleSelectionChange(e.target as HTMLTextAreaElement)}
+          onMouseUp={(e) => handleSelectionChange(e.target as HTMLTextAreaElement)}
           placeholder="Type translation dialogue here..."
           rows={3}
           className="w-full rounded-lg border border-[#262a3b] bg-[#12141c] p-2.5 text-xs text-slate-100 placeholder:text-slate-600 focus:border-[#60c1e5] focus:outline-hidden transition resize-y min-h-[64px] max-h-48 leading-relaxed font-sans"

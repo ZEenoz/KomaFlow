@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { TextBlock } from '../../db';
-import { restoreTextObject } from './persistedTextObjects';
+import type { TextObject } from '../types';
+import { restoreTextObject, serializeTextObject } from './persistedTextObjects';
 
 const block: TextBlock = {
   imageId: 1, originalText: '原文', translatedText: '**translated**',
@@ -97,6 +98,62 @@ describe('persisted renderer layout restoration', () => {
       ...block, translatedText: 'EVERYONE ELSE IS HERE', lines: ['EVERY-', 'ONE ELSE IS HERE'],
     };
     expect(restoreTextObject(upperBlock).text).toBe('EVERYONE ELSE IS HERE');
+  });
+
+  it('restores persisted stroke width, casing, and the block target language', () => {
+    const restored = restoreTextObject({
+      ...block, lines: ['Mixed Case'], strokeWidth: 5, uppercase: true, targetLang: 'th',
+    });
+    expect(restored.strokeWidth).toBe(5);
+    expect(restored.uppercase).toBe(true);
+    // A block-level language wins over the job fallback, so hyphenation rules stay with the text.
+    expect(restored.targetLang).toBe('th');
+    expect(restoreTextObject({ ...block, lines: ['Plain'] }, 'de').strokeWidth).toBe(2);
+  });
+
+  it('round-trips typography and per-character overrides through the shared serializer', () => {
+    const obj: TextObject = {
+      id: 'round-trip', x: 12, y: 24, width: 180, height: 120,
+      text: 'Styled words', lines: ['STYLED WORDS'], originalText: '原文',
+      textFromGeneratedLines: false,
+      fontSize: 22, fontFamily: 'sans-serif', color: '#112233',
+      color2: '#445566', isGradient: true, gradientAngle: 45,
+      strokeColor: '#ffffff', strokeColor2: '#000000', isStrokeGradient: true, strokeWidth: 4,
+      uppercase: true, letterSpacing: 1.5, opacity: 0.8, targetLang: 'th',
+      charStyles: [null, { bold: true, color: '#ff0000' }],
+      backgroundFill: '#eeeeee', backgroundPadding: 6, backgroundBorderRadius: 8,
+      shadowColor: '#333333', shadowBlur: 3, shadowAngle: 30, shadowDistance: 2,
+      typesetMode: 'simple',
+      positionedLines: [{ text: 'STYLED WORDS', x: 10, y: 20, width: 160, height: 22, baseline: 38 }],
+      contourPoints: [{ x: 0, y: 0 }, { x: 180, y: 0 }, { x: 180, y: 120 }],
+    };
+    const restored = restoreTextObject(serializeTextObject(7, obj));
+    expect(restored).toMatchObject({
+      text: 'Styled words',
+      lines: ['STYLED WORDS'],
+      textFromGeneratedLines: false,
+      strokeWidth: 4, uppercase: true, targetLang: 'th', letterSpacing: 1.5, opacity: 0.8,
+      color2: '#445566', isGradient: true, gradientAngle: 45,
+      strokeColor2: '#000000', isStrokeGradient: true, typesetMode: 'simple',
+      backgroundFill: '#eeeeee', backgroundPadding: 6, backgroundBorderRadius: 8,
+      shadowColor: '#333333', shadowBlur: 3, shadowAngle: 30, shadowDistance: 2,
+      positionedLines: [{ text: 'STYLED WORDS', x: 10, y: 20, width: 160, height: 22, baseline: 38 }],
+      charStyles: [null, { bold: true, color: '#ff0000' }],
+    });
+  });
+
+  it('preserves authored Thai newlines and provenance across save and reload', () => {
+    const authoredObj: TextObject = {
+      id: 'authored-th', x: 0, y: 0, width: 240, height: 120,
+      text: 'ถ้าพวกเขาเห็นท่า\nทางแปลกๆ จะทำยังไงดี!',
+      lines: ['ถ้าพวกเขาเห็นท่า', 'ทางแปลกๆ จะทำยังไงดี!'],
+      textFromGeneratedLines: false,
+      fontSize: 20, fontFamily: 'sans-serif', color: '#000000',
+      typesetMode: 'balloon', targetLang: 'th',
+    };
+    const restored = restoreTextObject(serializeTextObject(9, authoredObj));
+    expect(restored.text).toBe('ถ้าพวกเขาเห็นท่า\nทางแปลกๆ จะทำยังไงดี!');
+    expect(restored.textFromGeneratedLines).toBe(false);
   });
 
   it('threads the active job target language into the restored object', () => {
