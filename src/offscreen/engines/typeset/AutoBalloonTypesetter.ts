@@ -17,6 +17,21 @@ export const DEFAULT_RENDER_FONT_FAMILY = 'sans-serif';
 
 /**
  * Standard Cotrans/XianScan diamond reflow measurement against rectangular or polygon dimensions.
+ *
+ * @param ctx - Canvas measurement context with a mutable `font`.
+ * @param text - Text to fit.
+ * @param width - Container width in pixels.
+ * @param height - Container height in pixels.
+ * @param fontSize - Starting font size.
+ * @param maxFontSizeCap - Optional ceiling for the fitted size.
+ * @param fontFamily - CSS font-family stack.
+ * @param isBold - Whether to fit bold text.
+ * @param measureCache - Optional shared measurement cache.
+ * @param targetLang - Target language code, selecting hyphenation and segmentation rules.
+ * @param isItalic - Whether to fit italic text.
+ * @param minFontSizeFloor - Optional minimum font size floor.
+ * @param preserveNewlines - When true, authored newlines stay hard paragraph breaks.
+ * @returns Fitted font size and wrapped lines.
  */
 export function measureDefaultLayout(
   ctx: Parameters<typeof fitFontSizeWithLines>[0],
@@ -30,7 +45,8 @@ export function measureDefaultLayout(
   measureCache?: MeasureCache,
   targetLang: string = 'en',
   isItalic: boolean = false,
-  minFontSizeFloor?: number
+  minFontSizeFloor?: number,
+  preserveNewlines: boolean = false
 ): ReturnType<typeof fitFontSizeWithLines> {
   return fitFontSizeWithLines(
     ctx,
@@ -49,7 +65,8 @@ export function measureDefaultLayout(
     measureCache,
     targetLang,
     isItalic,
-    minFontSizeFloor
+    minFontSizeFloor,
+    preserveNewlines
   );
 }
 

@@ -16,7 +16,8 @@
  * Honest adapter limitations (NOT donor parity):
  * - Donor uses ICU4X `LineSegmenter` with compiled data. This module uses the
  *   `linebreak` npm package (UAX #14, Unicode 13) because ICU4X JS data is not
- *   installed. Locale tailoring is therefore unavailable.
+ *   installed. Locale tailoring is therefore unavailable for the UAX #14 pass;
+ *   Thai/Lao/Khmer/Myanmar word boundaries are added from `Intl.Segmenter` below.
  * - Donor uses ICU4X Korean `KeepAll`; this module filters breaks inside Hangul
  *   runs so Korean words stay whole, which matches the donor test expectations.
  * - Donor uses Jieba for Chinese word protection. Jieba's dictionary is not
@@ -27,6 +28,10 @@
  */
 
 import LineBreaker from 'linebreak';
+import {
+  SPACELESS_SCRIPT_RE,
+  collectWordBreakOffsets,
+} from '../../../shared/text/lineBreaks';
 import type { ContourLineBreakOpportunity } from './contourSegmentTypes';
 
 /** Mandatory break code units from UAX #14: LF, CR, NEL, LS, PS. */
@@ -89,13 +94,48 @@ function applyKoreanKeepAll(
 }
 
 /**
- * Computes UAX #14 line break opportunities for the source text.
- * Always includes offset 0 and a final sentinel at `text.length`.
+ * Merges extra word-boundary offsets into a sorted opportunity list without dropping any UAX #14
+ * break and without losing a mandatory flag when both sources agree on an offset.
+ *
+ * @param base - UAX #14 opportunities, including offset 0 and the final sentinel.
+ * @param extraOffsets - Additional safe interior offsets from {@link collectWordBreakOffsets}.
+ * @returns Opportunities sorted by offset with mandatory breaks preserved.
+ */
+function mergeOpportunities(
+  base: ContourLineBreakOpportunity[],
+  extraOffsets: ReadonlyArray<number>
+): ContourLineBreakOpportunity[] {
+  const byOffset = new Map<number, boolean>();
+  for (const opportunity of base) {
+    const previous = byOffset.get(opportunity.offset) ?? false;
+    byOffset.set(opportunity.offset, previous || opportunity.isMandatory);
+  }
+  for (const offset of extraOffsets) {
+    if (!byOffset.has(offset)) byOffset.set(offset, false);
+  }
+  return [...byOffset.entries()]
+    .sort(([left], [right]) => left - right)
+    .map(([offset, isMandatory]) => ({ offset, isMandatory }));
+}
+
+/**
+ * Computes UAX #14 line break opportunities for the source text, augmented with ICU word
+ * boundaries for space-free scripts. Always includes offset 0 and a final sentinel at
+ * `text.length`.
+ *
+ * Thai, Lao, Khmer, and Myanmar are written without spaces, so UAX #14 alone treats a whole
+ * paragraph as one long word. When {@link SPACELESS_SCRIPT_RE} matches, the safe word offsets from
+ * {@link collectWordBreakOffsets} are unioned into the UAX list: mandatory breaks and every UAX
+ * break survive, and duplicates keep their mandatory flag.
  *
  * @param text - Source text.
+ * @param targetLang - Target language; sample script evidence overrides a mismatch.
  * @returns Ordered opportunities with mandatory flags.
  */
-export function computeLineBreakOpportunities(text: string): ContourLineBreakOpportunity[] {
+export function computeLineBreakOpportunities(
+  text: string,
+  targetLang?: string
+): ContourLineBreakOpportunity[] {
   const opportunities: ContourLineBreakOpportunity[] = [{ offset: 0, isMandatory: false }];
 
   const breaker = new LineBreaker(text);
@@ -121,6 +161,10 @@ export function computeLineBreakOpportunities(text: string): ContourLineBreakOpp
   // dictionary we deliberately do not claim that protection; callers may pass
   // precomputed opportunities for exact donor parity.
   void containsChinese;
-  return filtered;
+
+  if (!SPACELESS_SCRIPT_RE.test(text)) return filtered;
+  // Merge after the Korean KeepAll filter so a Thai word offset that is not preceded by
+  // whitespace is not mistaken for a Korean cut and discarded.
+  return mergeOpportunities(filtered, collectWordBreakOffsets(text, targetLang));
 }
 

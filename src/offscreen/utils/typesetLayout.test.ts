@@ -6,12 +6,14 @@ import {
   fontSpec,
   decollideBoxes,
   isHardLineBreak,
+  reflowText,
   tokenizeNoSpaceScript,
   wrapText,
   NO_LINE_START_RE,
   OPENING_MARK_RE,
 } from './typesetLayout';
 import { INSERTED_HYPHEN } from './hyphenation';
+import { tokenizeNoSpaceScriptClusters } from '../../shared/text/lineBreaks';
 
 describe('typesetLayout', () => {
   describe('findHyphenationPoints', () => {
@@ -304,15 +306,21 @@ describe('typesetLayout', () => {
       expect(lines.join('').replace(/\s/g, '')).toBe(source.replace(/\s/g, ''));
     }
 
-    it('tokenizes Thai into clusters that never open with a mark or a trailing vowel', () => {
+    it('tokenizes Thai into word units that never open with a mark or a trailing vowel', () => {
       const tokens = tokenizeNoSpaceScript('ฉันสัญญากับเธอ');
       expect(tokens.join('')).toBe('ฉันสัญญากับเธอ');
       for (const token of tokens) {
         expect(token.trim().length).toBeGreaterThan(0);
         expect(CLUSTER_START_BARRED_RE.test(token[0])).toBe(false);
       }
-      // Marks ride on their base glyph: "ก้" is one unit, never "ก" + "้".
-      expect(tokenizeNoSpaceScript('ก้'.repeat(4)).every((token) => token.trim() === 'ก้')).toBe(true);
+      // ICU may return several clusters as one word unit, but that unit must still never open on
+      // a mark; the cluster fallback keeps each base glyph with its marks ("ก้", never "ก" + "้").
+      const markedWords = tokenizeNoSpaceScript('ก้'.repeat(4));
+      expect(markedWords.join('')).toBe('ก้'.repeat(4));
+      for (const token of markedWords) {
+        expect(CLUSTER_START_BARRED_RE.test(token[0])).toBe(false);
+      }
+      expect(tokenizeNoSpaceScriptClusters('ก้'.repeat(4)).every((token) => token.trim() === 'ก้')).toBe(true);
       // A leading vowel must not be the last glyph of a unit ("เธ" + "อ", never a dangling "เ").
       for (const token of tokenizeNoSpaceScript('เธอไป')) {
         expect(LEADING_VOWEL_RE.test(token[token.length - 1])).toBe(false);
@@ -331,6 +339,36 @@ describe('typesetLayout', () => {
         const lines = wrapText(ctx, THAI_DIALOGUE, maxWidth);
         expect(lines.length).toBeGreaterThan(1);
         expectLegalThaiLines(ctx, lines, THAI_DIALOGUE, maxWidth);
+      }
+    });
+
+    it('wraps both reported Thai sentences on word boundaries', () => {
+      const sentences = [
+        'ถ้าพวกเขาเห็นท่าทางแปลกๆ จะทำยังไงดี!',
+        'ถ้าหนูพยายามมากกว่านี้อีกนิด… ทุกอย่างก็น่าจะดีขึ้นใช่ไหมคะ',
+      ];
+      for (const source of sentences) {
+        for (const maxWidth of [120, 160]) {
+          const ctx = createThaiCtx();
+          const lines = wrapText(ctx, source, maxWidth, 'th');
+          expect(lines.length).toBeGreaterThan(1);
+          expectLegalThaiLines(ctx, lines, source, maxWidth);
+          // The reported failures were `ท่าทา|ง` and `อีกนิ|ด`; neither prefix may end a line.
+          expect(lines.some((line) => line.endsWith('ท่าทา'))).toBe(false);
+          expect(lines.some((line) => line.endsWith('อีกนิ'))).toBe(false);
+        }
+      }
+    });
+
+    it('does not dice Thai words when the paragraph also contains CJK', () => {
+      const source = 'ฉันสัญญากับเธอ日本';
+      for (const maxWidth of [60, 80]) {
+        const ctx = createThaiCtx();
+        const lines = wrapText(ctx, source, maxWidth, 'th');
+        expect(lines.length).toBeGreaterThan(1);
+        expectLegalThaiLines(ctx, lines, source, maxWidth);
+        // Splitting inside `สัญญา` would leave `สัญญ` at a line end.
+        expect(lines.some((line) => line.endsWith('สัญญ'))).toBe(false);
       }
     });
 
@@ -405,6 +443,27 @@ describe('typesetLayout', () => {
       for (const line of result.lines.slice(1)) {
         expect(/[\p{M}\u0E30\u0E32\u0E33\u0E45]/u.test(line[0])).toBe(false);
       }
+    });
+
+    it('fits mixed Thai+CJK text without measuring Thai at bare code units', () => {
+      const source = 'ฉันสัญญากับเธอ日本';
+      const result = fitFontSizeWithLines(
+        createThaiCtx(),
+        source,
+        'sans-serif',
+        220,
+        120,
+        24,
+        48,
+        0.05,
+        undefined,
+        false,
+        undefined,
+        'th'
+      );
+      expect(result.size).toBeGreaterThan(PRE_FIX_FLOOR_PX);
+      expect(result.lines.join('').replace(/\s/g, '')).toBe(source);
+      expect(result.lines.some((line) => line.endsWith('สัญญ'))).toBe(false);
     });
   });
 
@@ -511,6 +570,55 @@ describe('typesetLayout', () => {
       for (const line of wrapped.slice(1)) {
         expect(NO_LINE_START_RE.test(line[0])).toBe(false);
       }
+    });
+  });
+
+  describe('preserveNewlines', () => {
+    /** Mock measurement where every glyph advances 8 pixels. */
+    const mockCtx = { measureText: (t: string) => ({ width: t.length * 8 }) };
+
+    it('soft-merges authored single newlines by default in reflowText', () => {
+      expect(reflowText(mockCtx, 'First\nSecond', 200)).toEqual(['First Second']);
+    });
+
+    it('keeps authored single newlines when preserveNewlines is true', () => {
+      expect(reflowText(mockCtx, 'First\nSecond', 200, 'en', true)).toEqual(['First', 'Second']);
+    });
+
+    it('keeps intentional blank authored lines', () => {
+      expect(reflowText(mockCtx, 'First\n\nSecond', 200, 'en', true)).toEqual([
+        'First',
+        '',
+        'Second',
+      ]);
+    });
+
+    it('keeps authored newlines through fitFontSizeWithLines', () => {
+      const fitCtx = {
+        font: '16px sans-serif',
+        measureText(t: string): { width: number } {
+          const size = parseInt(fitCtx.font.match(/(\d+)px/)?.[1] ?? '16', 10);
+          return { width: t.length * (size * 0.5) };
+        },
+      };
+      const fitted = fitFontSizeWithLines(
+        fitCtx,
+        'Alpha\nBeta',
+        'sans-serif',
+        300,
+        300,
+        24,
+        48,
+        undefined,
+        undefined,
+        false,
+        undefined,
+        'en',
+        false,
+        undefined,
+        true
+      );
+      expect(fitted.lines).toEqual(['Alpha', 'Beta']);
     });
   });
 

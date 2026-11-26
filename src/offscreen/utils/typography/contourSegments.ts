@@ -43,7 +43,9 @@ export function buildContourSegments(
   };
 
   const opps =
-    opportunitiesOverride ?? options?.opportunities ?? computeLineBreakOpportunities(text);
+    opportunitiesOverride ??
+    options?.opportunities ??
+    computeLineBreakOpportunities(text, targetLang);
   if (opps.length < 2) {
     return [{
       range: { start: 0, end: text.length },

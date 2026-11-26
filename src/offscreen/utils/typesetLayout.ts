@@ -1,5 +1,14 @@
 import { HyphenationService, INSERTED_HYPHEN } from './hyphenation';
-import { SPACELESS_SCRIPT_RE } from './typography/kinsokuShori';
+import {
+  NO_LINE_START_RE,
+  OPENING_MARK_RE,
+  SPACELESS_SCRIPT_RE,
+  tokenizeNoSpaceScriptClusters,
+  tokenizeNoSpaceScriptWords,
+} from '../../shared/text/lineBreaks';
+
+// Re-exported for callers that historically imported these canonical rules from this engine.
+export { NO_LINE_START_RE, OPENING_MARK_RE, SPACELESS_SCRIPT_RE };
 
 /**
  * typesetLayout.ts
@@ -94,103 +103,25 @@ const MIN_FONT_SIZE = 6;
 const LINE_HEIGHT = 1.2;
 const LONE_PUNCT = /^[.．…·!！?？,，;；:：~～)"'']{1,10}$/;
 const TALL_FILL_MIN_ASPECT = 1.5;
-
-// Prohibited line-start characters (Kinsoku Shori)
-export const NO_LINE_START_RE = /^[.,!?:;…\-—―–ー－～)」』】》〉，、。：；！？]/;
-
-// Opening marks that bind forward to following word
-export const OPENING_MARK_RE = /^[¡¿([{«‹‘‚‛“„‟〈《「『【〔〖（［｛]/;
-
-// Unicode marks (Mn/Mc/Me) never open a line in any script: they modify the glyph before them.
-// Script-agnostic, so Thai tone marks and above/below vowels stay attached, and Lao, Khmer,
-// Burmese and Devanagari text wrapped by the no-space path keeps its clusters intact too.
-const COMBINING_MARK_RE = /\p{M}/u;
-
-// Thai spacing vowels written after their consonant (SARA A, SARA AA, SARA AM, LAKKHANGYAO) own a
-// full cell but still cannot open a line; they are not Unicode marks, so they are listed here.
-const THAI_TRAILING_VOWEL_RE = /[\u0E30\u0E32\u0E33\u0E45]/;
-
-// Thai leading vowels are written before the consonant they modify, so they must stay attached
-// to the glyph that follows them; a break right after a leading vowel would split the cluster.
-const THAI_LEADING_VOWEL_RE = /[\u0E40-\u0E44]/;
-
-// Contiguous Latin/digit runs inside a no-space script sentence stay atomic words (never diced
-// per character), matching the CJK tokenizer in fitFontSizeWithLines.
-const LATIN_RUN_RE = /[A-Za-z0-9'’-]/;
+/** Widest tolerated overflow for punctuation hung on the previous line (Kinsoku Shori). */
+const KINSOKU_OVERFLOW_TOLERANCE = 1.15;
 
 /**
  * Splits whitespace-free script text (Thai, Lao, Khmer, Burmese — {@link SPACELESS_SCRIPT_RE})
- * into atomic wrap units, without ever inserting a hyphen.
+ * into word-level atomic wrap units, without ever inserting a hyphen.
  *
- * Units are contiguous slices of the source string, so every wrapped line stays a substring of
- * the input (required by the clean-fit gate in {@link fitFontSizeWithLines}). A unit is one of:
- * - a contiguous Latin/digit run (`[A-Za-z0-9'’-]+`), so embedded Latin words are never diced;
- * - a script cluster: a base glyph plus every following glyph that cannot open a line (Unicode
- *   marks and Thai trailing vowels), and any glyph pulled in by a preceding Thai leading vowel
- *   (U+0E40..U+0E44);
- * - a single punctuation or symbol character, bound backward when it is barred from starting a
- *   line (Kinsoku Shori, {@link NO_LINE_START_RE}).
- *
- * Whitespace is insignificant inside these scripts (they have no inter-word spaces) and is kept
- * as a suffix of the preceding unit, so the greedy wrapper can drop it at a line break.
+ * Delegates to the canonical shared tokenizer so ICU dictionary segmentation, Latin/digit run
+ * atomicity, and Kinsoku/orthography binding are identical in every layout engine. Units remain
+ * contiguous slices of the source string, so wrapped lines stay substrings of the input (required
+ * by the clean-fit gate in {@link fitFontSizeWithLines}). Whitespace is kept as a suffix of the
+ * preceding unit so the greedy wrapper can drop it at a line break.
  *
  * @param text - Paragraph text containing a no-space script.
- * @returns Array of atomic wrap units, in source order; concatenating them reproduces the text
- * with inter-word whitespace intact.
+ * @param targetLang - Target language; sample script evidence overrides a mismatch.
+ * @returns Array of atomic word units, in source order; concatenating them reproduces the text.
  */
-export function tokenizeNoSpaceScript(text: string): string[] {
-  const tokens: string[] = [];
-  let latinRun = '';
-
-  /**
-   * Appends one unit, merging it backward when the orthography forbids starting a line with it.
-   *
-   * @param unit - Candidate wrap unit.
-   */
-  function pushUnit(unit: string): void {
-    if (!unit) return;
-    const lastIndex = tokens.length - 1;
-    if (lastIndex >= 0) {
-      const last = tokens[lastIndex];
-      const attachesBack =
-        COMBINING_MARK_RE.test(unit[0]) ||
-        THAI_TRAILING_VOWEL_RE.test(unit[0]) ||
-        THAI_LEADING_VOWEL_RE.test(last[last.length - 1]) ||
-        NO_LINE_START_RE.test(unit);
-      if (attachesBack) {
-        tokens[lastIndex] = `${last}${unit}`;
-        return;
-      }
-    }
-    tokens.push(unit);
-  }
-
-  /** Flushes the pending Latin/digit run as one atomic unit. */
-  function flushLatinRun(): void {
-    if (!latinRun) return;
-    const run = latinRun;
-    latinRun = '';
-    pushUnit(run);
-  }
-
-  for (const char of text) {
-    if (/\s/.test(char)) {
-      flushLatinRun();
-      if (tokens.length > 0) {
-        tokens[tokens.length - 1] += char;
-      }
-      continue;
-    }
-    if (LATIN_RUN_RE.test(char)) {
-      latinRun += char;
-      continue;
-    }
-    flushLatinRun();
-    pushUnit(char);
-  }
-  flushLatinRun();
-
-  return tokens;
+export function tokenizeNoSpaceScript(text: string, targetLang?: string): string[] {
+  return tokenizeNoSpaceScriptWords(text, targetLang);
 }
 
 // Common English prefixes and suffixes for syllable hyphenation
@@ -331,9 +262,9 @@ export function wrapText(
     const stem = punctMatch && punctMatch[1] ? punctMatch[1] : current;
     const trailingPunct = punctMatch && punctMatch[2] ? punctMatch[2] : '';
 
-    // Hanging punctuation tolerance (Kinsoku Shori): only allow 1.15x overflow if the word's
+    // Hanging punctuation tolerance (Kinsoku Shori): only allow the measured overflow if the word's
     // actual letters (stem) fit within maxWidth, and trailing punctuation pushes it into margin.
-    if (trailingPunct && ctx.measureText(stem).width <= maxWidth && ctx.measureText(current).width <= maxWidth * 1.15) {
+    if (trailingPunct && ctx.measureText(stem).width <= maxWidth && ctx.measureText(current).width <= maxWidth * KINSOKU_OVERFLOW_TOLERANCE) {
       return { head: [], tail: current };
     }
     if (ctx.measureText(current).width <= maxWidth) {
@@ -390,6 +321,39 @@ export function wrapText(
 
   for (const paragraph of text.split('\n')) {
     let current = '';
+
+    // No-space syllable scripts (Thai, Lao, Khmer, Burmese) break on ICU word boundaries with NO
+    // inserted hyphen: a hyphenated break is invalid orthography there, and it made every
+    // multi-line layout fail the clean-fit gate in fitFontSizeWithLines (Thai dialogue
+    // collapsed to the 6px floor). Latin words inside the sentence stay whole.
+    // This branch must run before the CJK one: mixed Thai+CJK text would otherwise be diced per
+    // code unit and split Thai clusters at bare characters.
+    // The predicate is the narrow script set, not NO_SPACE_SCRIPT_RE: that one also matches
+    // fullwidth punctuation, which would drag Latin paragraphs off this branch's sibling.
+    if (SPACELESS_SCRIPT_RE.test(paragraph)) {
+      for (const token of tokenizeNoSpaceScript(paragraph, targetLang)) {
+        // A single word wider than the box is the only case where a word may be subdivided.
+        // Splitting the whole word list up front would break normal Thai words mid-syllable.
+        const overflowsAlone = ctx.measureText(token.trimEnd()).width > maxWidth;
+        const emergencyClusters = overflowsAlone ? tokenizeNoSpaceScriptClusters(token) : [];
+        const pieces = emergencyClusters.length > 0 ? emergencyClusters : [token];
+
+        for (const piece of pieces) {
+          const candidate = `${current}${piece}`;
+          if (ctx.measureText(candidate).width <= maxWidth) {
+            current = candidate;
+            continue;
+          }
+          const line = current.trimEnd();
+          if (line) lines.push(line);
+          current = piece.trimStart();
+        }
+      }
+      const line = current.trimEnd();
+      if (line) lines.push(line);
+      continue;
+    }
+
     if (CJK_REGEX.test(paragraph)) {
       for (let i = 0; i < paragraph.length; i++) {
         const char = paragraph[i];
@@ -397,8 +361,11 @@ export function wrapText(
         if (ctx.measureText(candidate).width <= maxWidth) {
           current = candidate;
         } else {
-          // Kinsoku Shori: prohibited line-start char hangs on previous line if within 1.15x
-          if (NO_LINE_START_RE.test(char) && ctx.measureText(candidate).width <= maxWidth * 1.15) {
+          // Kinsoku Shori: prohibited line-start char hangs on previous line if within tolerance
+          if (
+            NO_LINE_START_RE.test(char) &&
+            ctx.measureText(candidate).width <= maxWidth * KINSOKU_OVERFLOW_TOLERANCE
+          ) {
             current = candidate;
             continue;
           }
@@ -407,28 +374,6 @@ export function wrapText(
         }
       }
       if (current) lines.push(current);
-      continue;
-    }
-
-    // No-space cluster scripts (Thai, Lao, Khmer, Burmese) break between clusters with NO
-    // inserted hyphen: a hyphenated break is invalid orthography there, and it made every
-    // multi-line layout fail the clean-fit gate in fitFontSizeWithLines (Thai dialogue
-    // collapsed to the 6px floor). Latin words inside the sentence stay whole.
-    // The predicate is the narrow script set, not NO_SPACE_SCRIPT_RE: that one also matches
-    // fullwidth punctuation, which would drag Latin paragraphs off this branch's sibling.
-    if (SPACELESS_SCRIPT_RE.test(paragraph)) {
-      for (const token of tokenizeNoSpaceScript(paragraph)) {
-        const candidate = `${current}${token}`;
-        if (ctx.measureText(candidate).width <= maxWidth) {
-          current = candidate;
-          continue;
-        }
-        const line = current.trimEnd();
-        if (line) lines.push(line);
-        current = token.trimStart();
-      }
-      const line = current.trimEnd();
-      if (line) lines.push(line);
       continue;
     }
 
@@ -474,7 +419,7 @@ export function wrapText(
         const isPurePunct = LONE_PUNCT.test(word);
         const isHyphenEnd = current.endsWith('-') || current.endsWith(INSERTED_HYPHEN);
         const candidate = isHyphenEnd || isPurePunct ? `${current}${word}` : `${current} ${word}`;
-        if (ctx.measureText(candidate).width <= (isPurePunct ? maxWidth * 1.15 : maxWidth)) {
+        if (ctx.measureText(candidate).width <= (isPurePunct ? maxWidth * KINSOKU_OVERFLOW_TOLERANCE : maxWidth)) {
           current = candidate;
         } else {
           paragraphLines.push(current);
@@ -511,7 +456,7 @@ export function wrapText(
           const prevLine = paragraphLines[li - 1];
           const prevWidth = ctx.measureText(prevLine).width;
           const punctWidth = ctx.measureText(punct).width;
-          if (prevWidth + punctWidth <= maxWidth * 1.15) {
+          if (prevWidth + punctWidth <= maxWidth * KINSOKU_OVERFLOW_TOLERANCE) {
             paragraphLines[li - 1] = `${prevLine}${punct}`;
             const remainder = line.slice(punct.length).trim();
             if (remainder) {
@@ -655,18 +600,37 @@ export function splitIntoLogicalParagraphs(text: string): string[] {
  * @param ctx - Canvas measurement context.
  * @param text - Text content to reflow.
  * @param maxWidth - Available bounding width.
- * @param targetLang - Target language code, selecting hyphenation rules.
+ * @param targetLang - Target language code, selecting hyphenation and segmentation rules.
+ * @param preserveNewlines - When true, every authored `\r?\n` starts a new wrapped paragraph
+ *   instead of being soft-merged by {@link splitIntoLogicalParagraphs}; blank authored lines are
+ *   kept as empty strings so intentional spacing survives the layout.
  * @returns Array of wrapped lines ready for canvas rendering.
  */
 export function reflowText(
   ctx: { measureText(t: string): { width: number } },
   text: string,
   maxWidth: number,
-  targetLang: string = 'en'
+  targetLang: string = 'en',
+  preserveNewlines: boolean = false
 ): string[] {
+  const out: string[] = [];
+
+  if (preserveNewlines) {
+    // Authored line breaks are layout instructions: wrap each paragraph on its own and keep
+    // blank lines, rather than guessing soft wraps from punctuation.
+    for (const authoredParagraph of text.split(/\r?\n/)) {
+      const paragraph = authoredParagraph.replace(/\s+/g, ' ').trim();
+      if (!paragraph) {
+        out.push('');
+        continue;
+      }
+      out.push(...balancedWrapText(ctx, paragraph, maxWidth, targetLang));
+    }
+    return out;
+  }
+
   if (isStructuredList(text)) {
     const rawLines = text.split('\n').map((l) => l.trim()).filter(Boolean);
-    const out: string[] = [];
     for (const line of rawLines) {
       const wrapped = wrapText(ctx, line, maxWidth, targetLang);
       out.push(...wrapped);
@@ -675,7 +639,6 @@ export function reflowText(
   }
 
   const paragraphs = splitIntoLogicalParagraphs(text);
-  const out: string[] = [];
   for (const p of paragraphs) {
     const cleanedParagraph = p.replace(/\s+/g, ' ').trim();
     if (!cleanedParagraph) continue;
@@ -740,6 +703,23 @@ export function createMeasureCache(
  * Pass 2: Tall-narrow floor (aspect ratio >= 2.0) prevents collapse into unreadable micro-text.
  * Pass 3: Vertical-fill hyphenation for tall boxes (aspect ratio >= 1.5).
  * Pass 4: Fallback.
+ *
+ * @param ctx - Canvas measurement context with a mutable `font`.
+ * @param text - Text content to fit.
+ * @param fontFamily - CSS font-family stack.
+ * @param boxW - Box width in pixels.
+ * @param boxH - Box height in pixels.
+ * @param startSize - Initial font size.
+ * @param maxSize - Optional maximum font size.
+ * @param boxInset - Fractional inset applied to each box side.
+ * @param customCjk - Optional CJK font stack override.
+ * @param isBold - Whether to fit bold text.
+ * @param measureCache - Optional shared measurement cache.
+ * @param targetLang - Target language code, selecting hyphenation and segmentation rules.
+ * @param isItalic - Whether to fit italic text.
+ * @param minFontSize - Optional explicit minimum font size floor.
+ * @param preserveNewlines - When true, authored newlines stay hard paragraph breaks during reflow.
+ * @returns Fitted font size and wrapped lines.
  */
 export function fitFontSizeWithLines(
   ctx: { font: string; measureText(t: string): { width: number } },
@@ -755,7 +735,8 @@ export function fitFontSizeWithLines(
   measureCache?: MeasureCache,
   targetLang: string = 'en',
   isItalic: boolean = false,
-  minFontSize?: number
+  minFontSize?: number,
+  preserveNewlines: boolean = false
 ): FitFontSizeLayout {
   const minFloor = typeof minFontSize === 'number' && Number.isFinite(minFontSize)
     ? Math.max(4, minFontSize)
@@ -777,19 +758,25 @@ export function fitFontSizeWithLines(
     measureText: (t: string) => ({ width: cache.measure(t, ctx.font) }),
   };
 
-  const isCjk = CJK_REGEX.test(text);
-  // No-space cluster scripts (Thai, Lao, Khmer, Burmese) are tokenized per cluster exactly like
-  // the wrapper does, so Pass 1 measures the units that wrapText will actually break on. Without
-  // this, a whole Thai sentence counted as one unbreakable "word" and Pass 1 always failed.
+  // No-space syllable scripts (Thai, Lao, Khmer, Burmese) are tokenized into the same word units
+  // wrapText will break on. Without this, a whole Thai sentence counted as one unbreakable
+  // "word" and Pass 1 always failed.
+  // The predicate runs before the CJK test: mixed Thai+CJK text must keep Thai word boundaries
+  // instead of measuring (and later wrapping) Thai at bare code units.
   // Same narrow predicate as the wrapper branch, so measurement and rendering never disagree.
-  const isClusterScript = !isCjk && SPACELESS_SCRIPT_RE.test(text);
+  const isClusterScript = SPACELESS_SCRIPT_RE.test(text);
+  const isCjk = !isClusterScript && CJK_REGEX.test(text);
   const rawWords = isCjk
     ? (text.match(/[\u3040-\u30ff\u31f0-\u31ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uac00-\ud7af\u1100-\u11ff\u3130-\u318f\u0900-\u097f\u0e00-\u0e7f\u0400-\u04ff\uff01-\uffee\u3000-\u303f]|[a-zA-Z0-9'’-]+|[^\s]/g) || [])
     : isClusterScript
-      ? tokenizeNoSpaceScript(text)
+      ? tokenizeNoSpaceScript(text, targetLang)
       : text.split(/[\s\n]+/).filter(Boolean);
   const words: string[] = [];
-  for (const w of rawWords) {
+  for (const rawWord of rawWords) {
+    // No-space tokens carry their inter-word whitespace as a suffix (the wrapper trims it at a
+    // line edge); measurement must ignore that invisible suffix or a word can look over-wide.
+    const w = isClusterScript ? rawWord.trim() : rawWord;
+    if (!w) continue;
     if (w.includes('-') && !w.startsWith('-') && !w.endsWith('-') && w.length >= 5) {
       const sub = w.split('-');
       for (let i = 0; i < sub.length; i++) {
@@ -846,7 +833,7 @@ export function fitFontSizeWithLines(
     );
 
     if (maxWordWidth <= maxW) {
-      const lines = reflowText(mCtx, text, maxW, targetLang);
+      const lines = reflowText(mCtx, text, maxW, targetLang, preserveNewlines);
       const lineH = mid * LINE_HEIGHT;
       const allLinesFitW = lines.every((l) => mCtx.measureText(l).width <= maxW + 0.5);
       const hasNoHyphenBreaks = lines.every((l) => (!l.endsWith('-') && !l.endsWith(INSERTED_HYPHEN)) || text.includes(l));
@@ -879,7 +866,7 @@ export function fitFontSizeWithLines(
       const mid = Math.floor((floorLo + floorHi) / 2);
       if (mid === 0) break;
       mCtx.font = fontSpec(mid, fontFamily, text, customCjk, isBold, isItalic);
-      const lines = reflowText(mCtx, text, maxW, targetLang);
+      const lines = reflowText(mCtx, text, maxW, targetLang, preserveNewlines);
       const lineH = mid * LINE_HEIGHT;
       const allFitW = lines.every((l) => mCtx.measureText(l).width <= maxW + 0.5);
       const totalH = lines.length * lineH;
