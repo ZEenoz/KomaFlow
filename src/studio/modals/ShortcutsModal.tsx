@@ -45,7 +45,9 @@ const SHORTCUT_GROUPS = [
       { key: 'Ctrl + Alt + V', desc: 'Paste typography style' },
       { key: 'Delete / Backspace', desc: 'Remove selected text box or sticker' },
       { key: 'Ctrl + D', desc: 'Duplicate selected text box' },
-      { key: 'Ctrl + B', desc: 'Toggle history drawer' },
+      { key: 'Ctrl + B', desc: 'Bold selected text or text box' },
+      { key: 'Ctrl + I', desc: 'Italicize selected text or text box' },
+      { key: 'Enter', desc: 'Edit selected text box' },
     ],
   },
 ];

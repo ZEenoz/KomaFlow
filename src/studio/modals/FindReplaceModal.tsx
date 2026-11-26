@@ -41,6 +41,12 @@ export const FindReplaceModal: React.FC<FindReplaceModalProps> = ({ onClose }) =
       .filter((idx) => idx !== -1);
   }, [textObjects, searchTerm, matchCase, wholeWord]);
 
+  /**
+   * Replaces every match in all dialogue boxes and records one undo entry.
+   * The replacement is passed as a function so `$&` and `$1` stay literal text.
+   *
+   * @returns Nothing.
+   */
   const handleReplaceAll = () => {
     if (!searchTerm.trim() || matchingIndices.length === 0) return;
 
@@ -53,7 +59,7 @@ export const FindReplaceModal: React.FC<FindReplaceModalProps> = ({ onClose }) =
         : new RegExp(escapeRegExp(searchTerm), flags);
 
       return applyTextObjectUpdates(obj, {
-        text: obj.text.replace(pattern, replaceTerm),
+        text: obj.text.replace(pattern, () => replaceTerm),
       }, studioStore.getState().globalTypesetMode);
     });
 

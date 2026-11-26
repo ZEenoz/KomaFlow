@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { studioStore } from './state/studioStore';
 import { studioUndoStack } from './state/undoStack';
 import { COLOR_ENGINE_OPTIONS } from './tools/StudioEngineSelector';
+import { STORAGE_KEYS } from '../shared/constants';
 import type { TextObject } from './types';
 
 describe('Studio State Management', () => {
@@ -14,6 +15,7 @@ describe('Studio State Management', () => {
       textObjects: [],
       selectedTextId: null,
       globalEditMode: false,
+      hasHydratedEngines: false,
     });
     studioUndoStack.clear();
   });
@@ -593,5 +595,48 @@ describe('Studio State Management', () => {
     expect(COLOR_ENGINE_OPTIONS.length).toBeGreaterThanOrEqual(2);
     expect(COLOR_ENGINE_OPTIONS.some((opt) => opt.id === 'manga-colorization-v2')).toBe(true);
     expect(COLOR_ENGINE_OPTIONS.some((opt) => opt.id === 'none')).toBe(true);
+  });
+
+  it('preserves Local Only engine selections after initial hydration', () => {
+    const get = chrome.storage.local.get as any;
+    const storedPopupState = {
+      activeInpaintId: 'aotgan',
+      activeOcrId: 'v6-medium',
+      activeEngineId: 'cloudflare-translate',
+      activeColorId: 'manga-colorization-v2',
+    };
+    get.mockClear();
+    get.mockImplementation((_key: string, callback: (data: Record<string, unknown>) => void) => {
+      const data = { [STORAGE_KEYS.POPUP_STATE]: storedPopupState };
+      callback(data);
+      return Promise.resolve(data);
+    });
+
+    studioStore.setState({
+      hasHydratedEngines: false,
+      syncWithGlobal: false,
+      selectedInpaintEngineId: 'telea',
+      selectedOcrEngineId: 'v6-small',
+      selectedTranslationEngineId: 'gg-translate',
+      selectedColorEngineId: 'none',
+    });
+
+    // First hydration reads the global selection even though the session is Local Only.
+    studioStore.hydrateFromStorage();
+    expect(studioStore.getState().hasHydratedEngines).toBe(true);
+    expect(studioStore.getState().selectedInpaintEngineId).toBe('aotgan');
+    expect(studioStore.getState().selectedOcrEngineId).toBe('v6-medium');
+
+    // A tool-panel remount calls hydrate again; it must not replace the local choice.
+    studioStore.setState({ selectedInpaintEngineId: 'simple', selectedOcrEngineId: 'v6-small' });
+    studioStore.hydrateFromStorage();
+    expect(studioStore.getState().selectedInpaintEngineId).toBe('simple');
+    expect(studioStore.getState().selectedOcrEngineId).toBe('v6-small');
+    expect(get).toHaveBeenCalledTimes(1);
+
+    // An explicit force is allowed to re-read global storage.
+    studioStore.hydrateFromStorage({ force: true });
+    expect(studioStore.getState().selectedInpaintEngineId).toBe('aotgan');
+    expect(get).toHaveBeenCalledTimes(2);
   });
 });

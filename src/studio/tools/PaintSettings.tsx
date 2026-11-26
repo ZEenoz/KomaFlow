@@ -26,11 +26,22 @@ export const PaintSettings: React.FC = () => {
     }
   };
 
+  /**
+   * Uploads a tile as the active paint pattern and releases the replaced blob URL.
+   * The active URL stays alive across tool switches while `studioStore` still references it.
+   *
+   * @param e - File input change carrying the selected image.
+   * @returns Nothing; updates `studioStore.paintSettings.patternUrl`.
+   */
   const handlePatternUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
+      const previousUrl = studioStore.getState().paintSettings.patternUrl;
       const url = URL.createObjectURL(file);
       update({ patternUrl: url });
+      if (previousUrl && previousUrl.startsWith('blob:')) {
+        URL.revokeObjectURL(previousUrl);
+      }
     }
   };
 

@@ -54,4 +54,21 @@ describe('Find and replace layout routing', () => {
     expect(studioStore.getState().textObjects[0].lines).toEqual(['new measured layout']);
     expect(studioStore.getState().textObjects[1]).toBe(unaffected);
   });
+
+  it('treats $& and $1 in the replacement as literal text', () => {
+    const base: TextObject = {
+      id: 'literal', x: 0, y: 0, width: 140, height: 80, text: 'hello friend',
+      lines: ['hello', 'friend'], fontSize: 18, fontFamily: 'sans-serif', color: '#000', typesetMode: 'simple',
+    };
+    studioStore.setState({ textObjects: [base], globalTypesetMode: 'simple' });
+    act(() => root.render(<FindReplaceModal onClose={() => {}} />));
+    const find = container.querySelector<HTMLInputElement>('input[placeholder="Search dialogue..."]')!;
+    const replace = container.querySelector<HTMLInputElement>('input[placeholder="Replacement text..."]')!;
+    act(() => fillInput(find, 'hello'));
+    act(() => fillInput(replace, '$& $1'));
+    const button = Array.from(container.querySelectorAll('button')).find(element => element.textContent?.includes('Replace All'))!;
+    act(() => button.click());
+
+    expect(layout.apply).toHaveBeenCalledWith(base, { text: '$& $1 friend' }, 'simple');
+  });
 });

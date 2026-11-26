@@ -7,6 +7,7 @@ import { studioUndoStack } from '../state/undoStack';
 import type { TextObject } from '../types';
 
 const layout = vi.hoisted(() => ({ apply: vi.fn(), applyBox: vi.fn(), prepare: vi.fn() }));
+const bridge = vi.hoisted(() => ({ ocr: vi.fn(), inpaint: vi.fn() }));
 vi.mock('./studioTypeset', () => ({
   applyTextObjectUpdates: layout.apply,
   applyBoxTypographyUpdate: layout.applyBox,
@@ -16,8 +17,20 @@ vi.mock('./studioTypeset', () => ({
   // and the inline editor keeps its native textarea selection behavior.
   getTypesetMeasureContext: () => null,
 }));
+vi.mock('../bridge/offscreenStudioBridge', () => ({
+  requestStudioOcr: bridge.ocr,
+  requestStudioInpaint: bridge.inpaint,
+}));
 vi.mock('./TextRenderer', () => ({ TextRenderer: { renderText: vi.fn() } }));
-vi.mock('./CanvasFurniture', () => ({ CanvasFurniture: { drawSelectionFurniture: vi.fn() } }));
+vi.mock('./CanvasFurniture', () => ({
+  CanvasFurniture: {
+    drawSelectionFurniture: vi.fn(),
+    drawUnselectedOutline: vi.fn(),
+    drawImageLayerSelection: vi.fn(),
+    hitTestImageLayer: vi.fn(() => null),
+    hitTestImageLayerHandles: vi.fn(() => null),
+  },
+}));
 
 let root: Root;
 let container: HTMLDivElement;
@@ -33,9 +46,12 @@ beforeEach(() => {
   layout.applyBox.mockReset().mockImplementation((current: TextObject, updates: Partial<TextObject>) =>
     ({ ...current, ...updates, lines: ['edited layout'] }));
   layout.prepare.mockReset().mockImplementation((current: TextObject) => ({ ...current, lines: ['canonical layout'] }));
+  bridge.ocr.mockReset();
+  bridge.inpaint.mockReset();
   vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockImplementation((() => ({
-    clearRect: vi.fn(), save: vi.fn(), restore: vi.fn(), drawImage: vi.fn(),
-    translate: vi.fn(), rotate: vi.fn(), setLineDash: vi.fn(), strokeRect: vi.fn(),
+    clearRect: vi.fn(), save: vi.fn(), restore: vi.fn(), drawImage: vi.fn(), fill: vi.fn(),
+    fillRect: vi.fn(), beginPath: vi.fn(), arc: vi.fn(), translate: vi.fn(), rotate: vi.fn(),
+    setLineDash: vi.fn(), strokeRect: vi.fn(),
   })) as unknown as typeof HTMLCanvasElement.prototype.getContext);
   studioStore.setState({
     activeTool: 'text', textObjects: [object], selectedTextId: object.id, editingTextId: null,
@@ -117,5 +133,44 @@ describe('Studio canvas layout routing', () => {
     expect(layout.prepare).toHaveBeenCalledOnce();
     expect(studioStore.getState().textObjects.at(-1)?.lines).toEqual(['canonical layout']);
     expect(studioStore.getState().textObjects.at(-1)?.typesetMode).toBeUndefined();
+  });
+
+  it('discards a single-area OCR result when the page changes mid-request', async () => {
+    let resolveOcr!: (value: { inpaintedImage: HTMLImageElement; textObjects: TextObject[] }) => void;
+    bridge.ocr.mockReturnValueOnce(new Promise((resolve) => { resolveOcr = resolve; }));
+    await act(async () => {
+      studioStore.setState({
+        activeTool: 'ocr',
+        ocrSettings: {
+          ...studioStore.getState().ocrSettings,
+          scanSource: 'background',
+          translate: false,
+          inpaint: false,
+        },
+      });
+    });
+    const canvas = container.querySelectorAll('canvas')[2] as HTMLCanvasElement;
+    canvas.setPointerCapture = vi.fn();
+    await act(async () => {
+      canvas.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: 10, clientY: 10, pointerId: 1 }));
+    });
+    await act(async () => {
+      canvas.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, clientX: 10, clientY: 10, pointerId: 1 }));
+    });
+    expect(bridge.ocr).toHaveBeenCalledTimes(1);
+
+    // Page switched while the OCR request was still in flight: its result belongs to the old page.
+    await act(async () => {
+      root.render(<StudioCanvas originalImage={null} cleanedImage={null} jobId={99} />);
+    });
+    await act(async () => {
+      resolveOcr({
+        inpaintedImage: document.createElement('img'),
+        textObjects: [{ ...object, id: 'stale-ocr', text: 'stale OCR' }],
+      });
+      await Promise.resolve();
+    });
+
+    expect(studioStore.getState().textObjects).toEqual([object]);
   });
 });

@@ -57,6 +57,12 @@ export type TransformHandle =
   | 'quad-br'
   | 'quad-bl';
 
+/** Corner handles that resize an image layer while its opposite corner stays anchored. */
+export type ImageLayerResizeHandle = 'nw' | 'ne' | 'se' | 'sw';
+
+/** Gesture targets on an image layer: the body for moving, or a corner for resizing. */
+export type ImageLayerHandle = 'move' | ImageLayerResizeHandle;
+
 export interface CharStyleOverride {
   bold?: boolean;
   italic?: boolean;

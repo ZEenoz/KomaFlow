@@ -34,6 +34,7 @@ import { ensureFontsRegistered } from '../shared/fontLibrary';
 import { DEFAULT_OCR_TIER_ID } from '../shared/ocrTiers';
 import { studioStore, useStudioStore } from './state/studioStore';
 import { studioUndoStack } from './state/undoStack';
+import { revokeImageLayerUrls } from './state/imageLayerUtils';
 import { requestStudioOcr, requestStudioColorize } from './bridge/offscreenStudioBridge';
 import {
   renderFullCompositeCanvas,
@@ -230,6 +231,7 @@ export const Studio: React.FC<StudioProps> = ({
   // would format or export content from the page the user already left.
   useEffect(() => {
     const resetTransientPageState = () => {
+      revokeImageLayerUrls(studioStore.getState().imageLayers);
       studioStore.setState({
         imageLayers: [],
         selectedImageLayerId: null,
@@ -343,7 +345,11 @@ export const Studio: React.FC<StudioProps> = ({
         });
       },
       applyImageLayers: (layers: ImageLayer[]) => {
-        studioStore.setState({ imageLayers: layers });
+        const selectedId = studioStore.getState().selectedImageLayerId;
+        studioStore.setState({
+          imageLayers: layers,
+          selectedImageLayerId: layers.some((layer) => layer.id === selectedId) ? selectedId : null,
+        });
       },
       applyColorState: (isColorized: boolean) => {
         setIsPageColorized(isColorized);
@@ -367,7 +373,11 @@ export const Studio: React.FC<StudioProps> = ({
         });
       },
       applyImageLayers: (layers: ImageLayer[]) => {
-        studioStore.setState({ imageLayers: layers });
+        const selectedId = studioStore.getState().selectedImageLayerId;
+        studioStore.setState({
+          imageLayers: layers,
+          selectedImageLayerId: layers.some((layer) => layer.id === selectedId) ? selectedId : null,
+        });
       },
       applyColorState: (isColorized: boolean) => {
         setIsPageColorized(isColorized);
@@ -375,6 +385,12 @@ export const Studio: React.FC<StudioProps> = ({
     });
   };
 
+  /**
+   * Applies a zoom preset using the shared clamped zoom source of truth.
+   *
+   * @param preset - Requested zoom preset.
+   * @returns Nothing.
+   */
   const handleZoomPreset = (preset: '100%' | 'fitWidth' | 'fitHeight' | 'fitWindow') => {
     setZoomDropdownOpen(false);
     const container = document.querySelector('[data-studio-canvas-container]') as HTMLElement | null;
@@ -389,14 +405,11 @@ export const Studio: React.FC<StudioProps> = ({
     if (preset === '100%') {
       studioStore.setState({ zoom: 1.0 });
     } else if (preset === 'fitWidth') {
-      const scale = availW / imageWidth;
-      studioStore.setState({ zoom: Math.max(0.05, Math.min(8.0, scale)) });
+      studioStore.setClampedZoom(availW / imageWidth);
     } else if (preset === 'fitHeight') {
-      const scale = availH / imageHeight;
-      studioStore.setState({ zoom: Math.max(0.05, Math.min(8.0, scale)) });
+      studioStore.setClampedZoom(availH / imageHeight);
     } else if (preset === 'fitWindow') {
-      const scale = Math.min(availW / imageWidth, availH / imageHeight);
-      studioStore.setState({ zoom: Math.max(0.05, Math.min(8.0, scale)) });
+      studioStore.setClampedZoom(Math.min(availW / imageWidth, availH / imageHeight));
     }
   };
 
@@ -406,6 +419,12 @@ export const Studio: React.FC<StudioProps> = ({
     return name.slice(0, 40) || 'manga-page';
   };
 
+  /**
+   * Downloads a full translated page composite; view-only modes never change the export.
+   *
+   * @param format - Output format, PNG or JPEG.
+   * @returns Resolves after the download starts.
+   */
   const handleExportImage = async (format: 'png' | 'jpeg' = 'png') => {
     const bgCanvas = getWorkingCanvas();
     const compositeCanvas = renderFullCompositeCanvas(
@@ -413,7 +432,7 @@ export const Studio: React.FC<StudioProps> = ({
       imageHeight,
       bgCanvas,
       originalImage,
-      viewMode,
+      'translated',
       imageLayers,
       textObjects
     );
@@ -453,6 +472,11 @@ export const Studio: React.FC<StudioProps> = ({
     }
   };
 
+  /**
+   * Copies the full translated page composite to the clipboard.
+   *
+   * @returns Resolves after the clipboard write attempt.
+   */
   const handleCopyCompositeToClipboard = async () => {
     const bgCanvas = getWorkingCanvas();
     const compositeCanvas = renderFullCompositeCanvas(
@@ -460,7 +484,7 @@ export const Studio: React.FC<StudioProps> = ({
       imageHeight,
       bgCanvas,
       originalImage,
-      viewMode,
+      'translated',
       imageLayers,
       textObjects
     );
@@ -1192,7 +1216,7 @@ export const Studio: React.FC<StudioProps> = ({
 
         {/* Canvas Body Container */}
         <div className="relative flex flex-1 min-h-0 w-full h-full overflow-hidden">
-          <StudioCanvas originalImage={originalImage} cleanedImage={cleanedImage} />
+          <StudioCanvas originalImage={originalImage} cleanedImage={cleanedImage} jobId={jobId} />
         </div>
       </main>
 

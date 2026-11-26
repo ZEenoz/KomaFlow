@@ -1,4 +1,4 @@
-import React, { useRef, useEffect, useState, useCallback } from 'react';
+import React, { useRef, useEffect, useState, useCallback, useMemo } from 'react';
 import {
   Copy,
   ClipboardPaste,
@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import { studioStore, useStudioStore } from '../state/studioStore';
 import { studioUndoStack } from '../state/undoStack';
+import { revokeImageLayerUrls } from '../state/imageLayerUtils';
 import {
   renderFullCompositeCanvas,
   downloadCanvasAsFile,
@@ -24,8 +25,8 @@ import {
 import {
   clientToImage,
   imageToClient,
-  MIN_ZOOM_LEVEL,
-  MAX_ZOOM_LEVEL,
+  MIN_ZOOM,
+  MAX_ZOOM,
 } from './CanvasViewport';
 import { BrushEngine } from './BrushEngine';
 import { TextRenderer } from './TextRenderer';
@@ -48,6 +49,8 @@ import { extractTypographyStyle } from '../state/studioStore';
 import { ensureFontsRegistered, preloadFontFamilies } from '../../shared/fontLibrary';
 import type {
   BoundingBox,
+  ImageLayer,
+  ImageLayerHandle,
   Point,
   TextObject,
   TransformHandle,
@@ -62,6 +65,15 @@ import type {
  * trade-off, not a correctness knob.
  */
 export const LIVE_REFIT_INTERVAL_MS = 60;
+
+/** Pointer travel in CSS pixels before a click becomes a drag gesture. */
+const GESTURE_DEADZONE_PX = 3;
+
+/** Brush footprint ring stroke width in CSS pixels. */
+const BRUSH_CURSOR_BORDER_WIDTH_PX = 1.5;
+
+/** Sits above floating toolbars (z-40) and the inline text editor (z-35). */
+const BRUSH_CURSOR_Z_INDEX = 45;
 
 /**
  * Coherent gesture record tracking an active text box transform or stationary click.
@@ -79,14 +91,31 @@ interface ActiveTextGesture {
   hasMoved: boolean;
 }
 
+/** Coherent gesture record for moving or corner-resizing an image layer (sticker). */
+interface ActiveImageGesture {
+  pointerId: number;
+  targetId: string;
+  handle: ImageLayerHandle;
+  initialLayer: ImageLayer;
+  startClientPoint: Point; // in CSS screen pixels for deadzone
+  startImagePoint: Point;  // in image coordinates for geometry
+  latestDeltaX: number;
+  latestDeltaY: number;
+  latestShiftKey: boolean;
+  hasMoved: boolean;
+}
+
 export interface StudioCanvasProps {
   originalImage: HTMLImageElement | null;
   cleanedImage: HTMLImageElement | null;
+  /** Page identity; async single-area AI results are discarded when this changes mid-request. */
+  jobId?: number;
 }
 
 export const StudioCanvas: React.FC<StudioCanvasProps> = ({
   originalImage,
   cleanedImage,
+  jobId,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const spacerRef = useRef<HTMLDivElement>(null);
@@ -117,17 +146,28 @@ export const StudioCanvas: React.FC<StudioCanvasProps> = ({
   const inlineInitialTextRef = useRef<TextObject[] | null>(null);
   const lastClickRef = useRef<{ time: number; id: string | null }>({ time: 0, id: null });
   const activeGestureRef = useRef<ActiveTextGesture | null>(null);
+  const activeImageGestureRef = useRef<ActiveImageGesture | null>(null);
   const rafIdRef = useRef<number | null>(null);
   /** Timestamp of the last live resize refit; throttles solver runs to LIVE_REFIT_INTERVAL_MS. */
   const lastLiveRefitAtRef = useRef<number>(0);
   /** Layout produced by the last live refit, carried over between sampling ticks. */
   const lastLiveLayoutRef = useRef<TextObject | null>(null);
   const warpScratchCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  /** Latest page id; lets an in-flight result detect that its page was replaced. */
+  const jobIdRef = useRef(jobId);
+  /** False after unmount so async canvas work never touches a torn-down surface. */
+  const mountedRef = useRef(false);
+  /** Cached decoded pattern; reloaded only when the uploaded URL changes. */
+  const patternImageRef = useRef<HTMLImageElement | null>(null);
+  const patternUrlRef = useRef<string | null>(null);
+  const brushCursorRef = useRef<HTMLDivElement | null>(null);
 
   const [copiedOrigPill, setCopiedOrigPill] = useState(false);
   const [isPointerDown, setIsPointerDown] = useState(false);
   const [isSpacePanning, setIsSpacePanning] = useState(false);
   const [isAiProcessing, setIsAiProcessing] = useState(false);
+  /** Counter bumped by scroll/resize/zoom so floating toolbar coordinates re-measure. */
+  const [viewportTick, setViewportTick] = useState(0);
   const aiProcessingRef = useRef(false);
   const [ocrFeedback, setOcrFeedback] = useState<string | null>(null);
   const [activeHandle, setActiveHandle] = useState<TransformHandle | null>(null);
@@ -143,6 +183,107 @@ export const StudioCanvas: React.FC<StudioCanvasProps> = ({
 
   const imageWidth = originalImage?.naturalWidth || cleanedImage?.naturalWidth || 800;
   const imageHeight = originalImage?.naturalHeight || cleanedImage?.naturalHeight || 1200;
+
+  // Async OCR/inpaint results must know which page and mounting session started them.
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    jobIdRef.current = jobId;
+    // Clear any in-flight AI spinner from the previous page so switching pages never leaves it stuck.
+    aiProcessingRef.current = false;
+    setIsAiProcessing(false);
+  }, [jobId]);
+
+  // Decode the uploaded tile once per URL; BrushEngine reuses the image for every dab.
+  useEffect(() => {
+    const url = paintSettings.patternUrl;
+    if (!url) {
+      patternUrlRef.current = null;
+      patternImageRef.current = null;
+      return;
+    }
+    if (patternUrlRef.current === url) return;
+
+    patternUrlRef.current = url;
+    patternImageRef.current = null;
+    const image = new Image();
+    image.onload = () => {
+      if (patternUrlRef.current === url) patternImageRef.current = image;
+    };
+    image.onerror = () => {
+      if (patternUrlRef.current === url) patternImageRef.current = null;
+    };
+    image.src = url;
+    return () => {
+      image.onload = null;
+      image.onerror = null;
+    };
+  }, [paintSettings.patternUrl]);
+
+  // Floating toolbars are fixed-position DOM, so scroll and window resize need an explicit
+  // re-measure even though neither changes React state.
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    const bumpViewport = () => setViewportTick((tick) => tick + 1);
+    container.addEventListener('scroll', bumpViewport, { passive: true });
+    window.addEventListener('resize', bumpViewport);
+    return () => {
+      container.removeEventListener('scroll', bumpViewport);
+      window.removeEventListener('resize', bumpViewport);
+    };
+  }, []);
+
+  // Toolbar zoom buttons commit their size after render; bump once more to measure the new rect.
+  const lastMeasuredZoomRef = useRef(zoom);
+  useEffect(() => {
+    if (lastMeasuredZoomRef.current === zoom) return;
+    lastMeasuredZoomRef.current = zoom;
+    setViewportTick((tick) => tick + 1);
+  }, [zoom]);
+
+  const brushCursorSize =
+    activeTool === 'erase'
+      ? eraseSettings.size
+      : activeTool === 'paint'
+        ? paintSettings.size
+        : activeTool === 'inpaint'
+          ? inpaintSettings.size
+          : activeTool === 'ocr'
+            ? ocrSettings.size
+            : null;
+  const brushCursorShape =
+    activeTool === 'paint'
+      ? paintSettings.shape
+      : activeTool === 'inpaint'
+        ? inpaintSettings.shape
+        : activeTool === 'ocr'
+          ? ocrSettings.shape
+          : eraseSettings.shape;
+  const showsBrushCursor = brushCursorSize !== null && !isAiProcessing && !isSpacePanning;
+
+  /**
+   * Positions the brush footprint ring under the pointer.
+   *
+   * @param e - Pointer event carrying client coordinates.
+   */
+  const moveBrushCursor = (e: React.PointerEvent): void => {
+    const ring = brushCursorRef.current;
+    if (!ring) return;
+    ring.style.left = `${e.clientX}px`;
+    ring.style.top = `${e.clientY}px`;
+    ring.style.opacity = '1';
+  };
+
+  /** Hides the brush footprint ring when the pointer leaves the artwork. */
+  const hideBrushCursor = (): void => {
+    if (brushCursorRef.current) brushCursorRef.current.style.opacity = '0';
+  };
 
   // A character selection belongs to exactly one box. Switching or clearing the selected box
   // must drop it, otherwise Bold/Italic act on a range the user can no longer see.
@@ -182,7 +323,11 @@ export const StudioCanvas: React.FC<StudioCanvasProps> = ({
     brushEngineRef.current.init(imageWidth, imageHeight);
   }, [cleanedImage, originalImage, imageWidth, imageHeight]);
 
-  // Main redraw loop for overlay canvas (text objects, stickers, selection furniture)
+  /**
+   * Repaints the overlay canvas with text, stickers, and selection furniture.
+   *
+   * @returns Nothing.
+   */
   const redrawOverlay = useCallback(() => {
     const overlay = overlayCanvasRef.current;
     if (!overlay) return;
@@ -213,18 +358,6 @@ export const StudioCanvas: React.FC<StudioCanvasProps> = ({
         ctx.drawImage(layer.imageBitmap, -layer.width / 2, -layer.height / 2, layer.width, layer.height);
       }
       ctx.restore();
-
-      if (!hideBoxes && layer.id === selectedImageLayerId) {
-        ctx.save();
-        ctx.strokeStyle = 'rgba(96, 193, 229, 0.95)';
-        ctx.lineWidth = 3;
-        ctx.setLineDash([4, 4]);
-        ctx.strokeRect(layer.x - 1, layer.y - 1, layer.width + 2, layer.height + 2);
-        ctx.strokeStyle = appearance.selectedBoxBorderColor;
-        ctx.lineWidth = 1.5;
-        ctx.strokeRect(layer.x, layer.y, layer.width, layer.height);
-        ctx.restore();
-      }
     }
 
     // 2. Render Text Objects
@@ -257,24 +390,17 @@ export const StudioCanvas: React.FC<StudioCanvasProps> = ({
 
     // 3. Render transform furniture if not in hideBoxes mode
     if (!hideBoxes) {
-      // Draw subtle dashed grey outline for unselected skipped dialogue boxes
+      const selectedLayer = imageLayers.find(
+        (layer) => layer.id === selectedImageLayerId && layer.isVisible !== false
+      );
+      if (selectedLayer) {
+        CanvasFurniture.drawImageLayerSelection(ctx, selectedLayer, appearance.selectedBoxBorderColor);
+      }
+
+      // Unselected boxes stay locatable through the appearance-configured outline.
       for (const obj of textObjects) {
-        if (obj.isSkipped && obj.id !== selectedTextId) {
-          ctx.save();
-          ctx.translate(obj.x, obj.y);
-          if (obj.rotation) {
-            const cx = obj.width / 2;
-            const cy = obj.height / 2;
-            ctx.translate(cx, cy);
-            ctx.rotate((obj.rotation * Math.PI) / 180);
-            ctx.translate(-cx, -cy);
-          }
-          ctx.strokeStyle = '#94a3b8';
-          ctx.lineWidth = 1;
-          ctx.setLineDash([2, 3]);
-          ctx.strokeRect(0, 0, obj.width, obj.height);
-          ctx.restore();
-        }
+        if (obj.id === selectedTextId || obj.isVisible === false) continue;
+        CanvasFurniture.drawUnselectedOutline(ctx, obj, appearance.unselectedBoxBorderColor);
       }
 
       const selectedObj = textObjects.find((t) => t.id === selectedTextId);
@@ -346,6 +472,33 @@ export const StudioCanvas: React.FC<StudioCanvasProps> = ({
       textObjects: { before: prev, after: next },
     });
   }, [selectedTextId]);
+
+  /**
+   * Deletes the selected sticker layer and records an undo entry.
+   *
+   * The decoded bitmap survives URL revocation, so undo can restore the layer this session.
+   *
+   * @returns Nothing; no-op when no sticker is selected.
+   */
+  const handleDeleteSelectedImageLayer = useCallback(() => {
+    if (!selectedImageLayerId) return;
+    const liveLayers = studioStore.getState().imageLayers;
+    const target = liveLayers.find((layer) => layer.id === selectedImageLayerId);
+    if (!target) return;
+
+    const prev = [...liveLayers];
+    const next = liveLayers.filter((layer) => layer.id !== target.id);
+    studioStore.setState({ imageLayers: next, selectedImageLayerId: null });
+    revokeImageLayerUrls([target]);
+    studioUndoStack.push({
+      id: `delete-layer-${Date.now()}`,
+      timestamp: Date.now(),
+      description: 'Delete Sticker Layer',
+      imageLayers: { before: prev, after: next },
+    });
+    activeImageGestureRef.current = null;
+    setActiveHandle(null);
+  }, [selectedImageLayerId]);
 
   const handleRasterizeText = useCallback(() => {
     const liveTexts = studioStore.getState().textObjects;
@@ -493,11 +646,15 @@ export const StudioCanvas: React.FC<StudioCanvasProps> = ({
         e.preventDefault();
         setIsSpacePanning(true);
       }
-      if ((e.key === 'Delete' || e.key === 'Backspace') && selectedTextId) {
+      if ((e.key === 'Delete' || e.key === 'Backspace') && (selectedTextId || selectedImageLayerId)) {
         const target = e.target as HTMLElement;
         if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) return;
         e.preventDefault();
-        handleDeleteSelectedText();
+        if (selectedTextId) {
+          handleDeleteSelectedText();
+        } else {
+          handleDeleteSelectedImageLayer();
+        }
       }
       if (e.key === 'Enter' && selectedTextId && !editingTextId) {
         const target = e.target as HTMLElement;
@@ -540,7 +697,7 @@ export const StudioCanvas: React.FC<StudioCanvasProps> = ({
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
     };
-  }, [selectedTextId, editingTextId, handleDeleteSelectedText, handleDuplicateSelectedText, handleCopyStyle, handlePasteStyle, handleToggleBold, handleToggleItalic]);
+  }, [selectedTextId, selectedImageLayerId, editingTextId, handleDeleteSelectedText, handleDeleteSelectedImageLayer, handleDuplicateSelectedText, handleCopyStyle, handlePasteStyle, handleToggleBold, handleToggleItalic]);
 
   // Global click & escape listener to close custom context menu
   useEffect(() => {
@@ -576,7 +733,7 @@ export const StudioCanvas: React.FC<StudioCanvasProps> = ({
     }
 
     if (clicked) {
-      studioStore.setState({ selectedTextId: clicked.id });
+      studioStore.setState({ selectedTextId: clicked.id, selectedImageLayerId: null });
     }
 
     setContextMenu({
@@ -588,6 +745,12 @@ export const StudioCanvas: React.FC<StudioCanvasProps> = ({
     });
   };
 
+  /**
+   * Exports the translated composite from the canvas context menu.
+   *
+   * @param format - Output format, PNG or JPEG.
+   * @returns Resolves after the download starts.
+   */
   const handleContextDownload = async (format: 'png' | 'jpeg' = 'png') => {
     const bgCanvas = bgCanvasRef.current;
     const compositeCanvas = renderFullCompositeCanvas(
@@ -595,7 +758,7 @@ export const StudioCanvas: React.FC<StudioCanvasProps> = ({
       imageHeight,
       bgCanvas,
       originalImage,
-      viewMode,
+      'translated',
       imageLayers,
       textObjects
     );
@@ -603,6 +766,11 @@ export const StudioCanvas: React.FC<StudioCanvasProps> = ({
     setContextMenu(null);
   };
 
+  /**
+   * Copies the translated composite from the canvas context menu to the clipboard.
+   *
+   * @returns Resolves after the clipboard write attempt.
+   */
   const handleContextCopyImage = async () => {
     const bgCanvas = bgCanvasRef.current;
     const compositeCanvas = renderFullCompositeCanvas(
@@ -610,7 +778,7 @@ export const StudioCanvas: React.FC<StudioCanvasProps> = ({
       imageHeight,
       bgCanvas,
       originalImage,
-      viewMode,
+      'translated',
       imageLayers,
       textObjects
     );
@@ -652,7 +820,12 @@ export const StudioCanvas: React.FC<StudioCanvasProps> = ({
     setContextMenu(null);
   };
 
-  // Mouse wheel listener: natural scrolling vs cursor-centered zoom
+  /**
+   * Handles natural scrolling, horizontal shift-scroll, and cursor-centered zoom.
+   *
+   * @param e - Wheel event from the canvas scroll container.
+   * @returns Nothing.
+   */
   const handleWheel = (e: React.WheelEvent) => {
     const container = containerRef.current;
     if (!container) return;
@@ -664,7 +837,7 @@ export const StudioCanvas: React.FC<StudioCanvasProps> = ({
       const mouseY = e.clientY - containerRect.top + container.scrollTop;
 
       const factor = e.deltaY < 0 ? 1.15 : 0.85;
-      const newZoom = Math.max(MIN_ZOOM_LEVEL, Math.min(MAX_ZOOM_LEVEL, zoom * factor));
+      const newZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, zoom * factor));
       const ratio = newZoom / zoom;
 
       studioStore.setState({ zoom: newZoom });
@@ -674,6 +847,7 @@ export const StudioCanvas: React.FC<StudioCanvasProps> = ({
           containerRef.current.scrollLeft = mouseX * ratio - (e.clientX - containerRect.left);
           containerRef.current.scrollTop = mouseY * ratio - (e.clientY - containerRect.top);
         }
+        setViewportTick((tick) => tick + 1);
       });
     } else if (e.shiftKey) {
       e.preventDefault();
@@ -692,6 +866,22 @@ export const StudioCanvas: React.FC<StudioCanvasProps> = ({
       imageHeight
     );
   };
+
+  /**
+   * Builds BrushEngine options for the current paint settings, including the decoded pattern.
+   *
+   * @returns Stroke and compositing options shared by pointer-down and drag frames.
+   */
+  const getPaintOptions = () => ({
+    shape: paintSettings.shape,
+    size: paintSettings.size,
+    feather: paintSettings.feather,
+    color: paintSettings.color,
+    paintMode: paintSettings.mode,
+    blurRadius: paintSettings.blurRadius,
+    patternScale: paintSettings.patternScale,
+    patternImage: paintSettings.mode === 'pattern' ? patternImageRef.current : null,
+  });
 
   // Ensure any scheduled RAF is cancelled on component unmount
   useEffect(() => {
@@ -810,7 +1000,34 @@ export const StudioCanvas: React.FC<StudioCanvasProps> = ({
     }));
   }, []);
 
-  // Pointer Down
+  /**
+   * Applies the latest image layer move/resize to the store on animation frames.
+   *
+   * @returns Nothing; recomputes from the gesture snapshot so drags never accumulate error.
+   */
+  const applyImageTransformFrame = useCallback(() => {
+    const gesture = activeImageGestureRef.current;
+    if (!gesture || !gesture.hasMoved) return;
+    const bounds = CanvasFurniture.resizeImageLayer(
+      gesture.initialLayer,
+      gesture.handle,
+      gesture.latestDeltaX,
+      gesture.latestDeltaY,
+      gesture.latestShiftKey
+    );
+    studioStore.setState((state) => ({
+      imageLayers: state.imageLayers.map((layer) =>
+        layer.id === gesture.targetId ? { ...layer, ...bounds } : layer
+      ),
+    }));
+  }, []);
+
+  /**
+   * Begins a brush stroke, text gesture, or selection action at the pointer position.
+   *
+   * @param e - Pointer-down event from the overlay canvas.
+   * @returns Nothing.
+   */
   const handlePointerDown = (e: React.PointerEvent) => {
     if (e.button !== 0 || aiProcessingRef.current || isAiProcessing) return;
     if (!ToolViewModePolicy.isToolAllowed(activeTool, viewMode)) return;
@@ -847,24 +1064,9 @@ export const StudioCanvas: React.FC<StudioCanvasProps> = ({
     // Paint Brush
     if (activeTool === 'paint' && bgCtx) {
       brushEngineRef.current.saveSnapshot(bgCtx);
-      brushEngineRef.current.beginStroke(pt, {
-        shape: paintSettings.shape,
-        size: paintSettings.size,
-        feather: paintSettings.feather,
-        color: paintSettings.color,
-        paintMode: paintSettings.mode,
-        blurRadius: paintSettings.blurRadius,
-        patternScale: paintSettings.patternScale,
-      });
-
-      brushEngineRef.current.applyPaint(bgCtx, {
-        shape: paintSettings.shape,
-        size: paintSettings.size,
-        feather: paintSettings.feather,
-        color: paintSettings.color,
-        paintMode: paintSettings.mode,
-        blurRadius: paintSettings.blurRadius,
-      });
+      const paintOptions = getPaintOptions();
+      brushEngineRef.current.beginStroke(pt, paintOptions);
+      brushEngineRef.current.applyPaint(bgCtx, paintOptions);
       return;
     }
 
@@ -893,23 +1095,24 @@ export const StudioCanvas: React.FC<StudioCanvasProps> = ({
       return;
     }
 
-    // Select & Transform Tool
-    if (activeTool === 'select' || activeTool === 'text') {
+    // Select & Transform Text or Image Layers
+    const isTextSelectionTool = activeTool === 'select' || activeTool === 'text';
+    const isImageSelectionTool = isTextSelectionTool || activeTool === 'image';
+    if (isImageSelectionTool) {
       const liveTexts = studioStore.getState().textObjects;
-      const selectedObj = liveTexts.find((t) => t.id === selectedTextId);
+      const liveLayers = studioStore.getState().imageLayers;
+      const selectedLayer = liveLayers.find((layer) => layer.id === selectedImageLayerId);
 
-      if (selectedObj && !hideBoxes && !selectedObj.isLocked) {
-        const handle = CanvasFurniture.hitTestHandles(pt, selectedObj);
+      // Image layer corner handles take priority over everything beneath them.
+      if (selectedLayer && !hideBoxes && !selectedLayer.isLocked) {
+        const handle = CanvasFurniture.hitTestImageLayerHandles(pt, selectedLayer);
         if (handle) {
-          // A new drag owns its own layout sampling; never serve a previous gesture memo.
-          resetContourFitMemo();
-          lastLiveLayoutRef.current = null;
-          lastLiveRefitAtRef.current = 0;
-          activeGestureRef.current = {
+          activeGestureRef.current = null;
+          activeImageGestureRef.current = {
             pointerId: e.pointerId,
-            targetId: selectedObj.id,
+            targetId: selectedLayer.id,
             handle,
-            initialTransform: { ...selectedObj },
+            initialLayer: { ...selectedLayer },
             startClientPoint: { x: e.clientX, y: e.clientY },
             startImagePoint: pt,
             latestDeltaX: 0,
@@ -922,36 +1125,97 @@ export const StudioCanvas: React.FC<StudioCanvasProps> = ({
         }
       }
 
-      let clickedObj: TextObject | null = null;
-      for (let i = liveTexts.length - 1; i >= 0; i--) {
-        if (CanvasFurniture.hitTestBody(pt, liveTexts[i])) {
-          clickedObj = liveTexts[i];
-          break;
+      if (isTextSelectionTool) {
+        const selectedObj = liveTexts.find((t) => t.id === selectedTextId);
+
+        if (selectedObj && !hideBoxes && !selectedObj.isLocked) {
+          const handle = CanvasFurniture.hitTestHandles(pt, selectedObj);
+          if (handle) {
+            // A new drag owns its own layout sampling; never serve a previous gesture memo.
+            resetContourFitMemo();
+            lastLiveLayoutRef.current = null;
+            lastLiveRefitAtRef.current = 0;
+            activeImageGestureRef.current = null;
+            activeGestureRef.current = {
+              pointerId: e.pointerId,
+              targetId: selectedObj.id,
+              handle,
+              initialTransform: { ...selectedObj },
+              startClientPoint: { x: e.clientX, y: e.clientY },
+              startImagePoint: pt,
+              latestDeltaX: 0,
+              latestDeltaY: 0,
+              latestShiftKey: e.shiftKey,
+              hasMoved: false,
+            };
+            setActiveHandle(handle);
+            return;
+          }
+        }
+
+        let clickedObj: TextObject | null = null;
+        for (let i = liveTexts.length - 1; i >= 0; i--) {
+          if (CanvasFurniture.hitTestBody(pt, liveTexts[i])) {
+            clickedObj = liveTexts[i];
+            break;
+          }
+        }
+
+        if (clickedObj) {
+          // If clicking another object while editing, dismiss previous edit
+          if (editingTextId && editingTextId !== clickedObj.id) {
+            studioStore.setState({
+              editingTextId: null,
+              selectedTextId: clickedObj.id,
+              selectedImageLayerId: null,
+            });
+          } else {
+            studioStore.setState({ selectedTextId: clickedObj.id, selectedImageLayerId: null });
+          }
+          activeImageGestureRef.current = null;
+
+          // Locked text objects can be selected, but cannot be moved or transformed
+          if (clickedObj.isLocked) {
+            activeGestureRef.current = null;
+            setActiveHandle(null);
+            return;
+          }
+
+          // Arm 'move' handle for dragging. Double-click to edit is deferred to pointerup
+          // when no movement occurs, so immediate or fast 2nd-click dragging never freezes!
+          activeGestureRef.current = {
+            pointerId: e.pointerId,
+            targetId: clickedObj.id,
+            handle: 'move',
+            initialTransform: { ...clickedObj },
+            startClientPoint: { x: e.clientX, y: e.clientY },
+            startImagePoint: pt,
+            latestDeltaX: 0,
+            latestDeltaY: 0,
+            latestShiftKey: e.shiftKey,
+            hasMoved: false,
+          };
+          setActiveHandle('move');
+          return;
         }
       }
 
-      if (clickedObj) {
-        // If clicking another object while editing, dismiss previous edit
-        if (editingTextId && editingTextId !== clickedObj.id) {
-          studioStore.setState({ editingTextId: null, selectedTextId: clickedObj.id });
-        } else if (selectedTextId !== clickedObj.id) {
-          studioStore.setState({ selectedTextId: clickedObj.id });
-        }
-
-        // Locked text objects can be selected, but cannot be moved or transformed
-        if (clickedObj.isLocked) {
-          activeGestureRef.current = null;
-          setActiveHandle(null);
-          return;
-        }
-
-        // Arm 'move' handle for dragging. Double-click to edit is deferred to pointerup
-        // when no movement occurs, so immediate or fast 2nd-click dragging never freezes!
-        activeGestureRef.current = {
+      // Image layer body (below text, which paints later in the scene).
+      const clickedLayer = CanvasFurniture.hitTestImageLayer(pt, liveLayers);
+      if (clickedLayer) {
+        studioStore.setState({
+          selectedImageLayerId: clickedLayer.id,
+          selectedTextId: null,
+          editingTextId: null,
+          inlineSelection: null,
+        });
+        setInlineSelection(null);
+        activeGestureRef.current = null;
+        activeImageGestureRef.current = {
           pointerId: e.pointerId,
-          targetId: clickedObj.id,
+          targetId: clickedLayer.id,
           handle: 'move',
-          initialTransform: { ...clickedObj },
+          initialLayer: { ...clickedLayer },
           startClientPoint: { x: e.clientX, y: e.clientY },
           startImagePoint: pt,
           latestDeltaX: 0,
@@ -963,29 +1227,35 @@ export const StudioCanvas: React.FC<StudioCanvasProps> = ({
         return;
       }
 
-      // Clicked outside text objects
+      // Clicked empty canvas: drop every selection and the edit session.
       activeGestureRef.current = null;
+      activeImageGestureRef.current = null;
       setActiveHandle(null);
       lastClickRef.current = { time: 0, id: null };
-
       if (editingTextId) {
         studioStore.setState({ editingTextId: null, inlineSelection: null });
         setInlineSelection(null);
       }
-
-      // If a text bubble is currently selected, clicking empty space deselects it
-      if (selectedTextId) {
-        studioStore.setState({ selectedTextId: null, inlineSelection: null });
+      if (selectedTextId || selectedImageLayerId) {
+        studioStore.setState({
+          selectedTextId: null,
+          selectedImageLayerId: null,
+          inlineSelection: null,
+        });
         setInlineSelection(null);
-        return;
       }
-
       return;
     }
   };
 
-  // Pointer Move
+  /**
+   * Continues the active brush stroke, text transform, or brush-cursor tracking.
+   *
+   * @param e - Pointer-move event from the overlay canvas.
+   * @returns Nothing.
+   */
   const handlePointerMove = (e: React.PointerEvent) => {
+    if (showsBrushCursor) moveBrushCursor(e);
     const pt = getPointerImageCoords(e);
 
     if (isPointerDown && isSpacePanning) {
@@ -997,21 +1267,39 @@ export const StudioCanvas: React.FC<StudioCanvasProps> = ({
     }
 
     if (!isPointerDown) {
-      if (activeTool === 'select' || activeTool === 'text') {
-        const liveTexts = studioStore.getState().textObjects;
-        const selectedObj = liveTexts.find((t) => t.id === selectedTextId);
-        if (selectedObj && !hideBoxes) {
-          const handle = CanvasFurniture.hitTestHandles(pt, selectedObj);
+      const isTextSelectionTool = activeTool === 'select' || activeTool === 'text';
+      const isImageSelectionTool = isTextSelectionTool || activeTool === 'image';
+      if (isImageSelectionTool) {
+        const state = studioStore.getState();
+        const selectedLayer = state.imageLayers.find((layer) => layer.id === selectedImageLayerId);
+        if (selectedLayer && !hideBoxes && !selectedLayer.isLocked) {
+          const handle = CanvasFurniture.hitTestImageLayerHandles(pt, selectedLayer);
           if (handle) {
-            setCanvasCursor(getHandleCursor(handle, selectedObj.rotation));
+            setCanvasCursor(getHandleCursor(handle, selectedLayer.rotation));
             return;
           }
         }
-        for (let i = liveTexts.length - 1; i >= 0; i--) {
-          if (CanvasFurniture.hitTestBody(pt, liveTexts[i])) {
-            setCanvasCursor('move');
-            return;
+
+        if (isTextSelectionTool) {
+          const selectedObj = state.textObjects.find((t) => t.id === selectedTextId);
+          if (selectedObj && !hideBoxes) {
+            const handle = CanvasFurniture.hitTestHandles(pt, selectedObj);
+            if (handle) {
+              setCanvasCursor(getHandleCursor(handle, selectedObj.rotation));
+              return;
+            }
           }
+          for (let i = state.textObjects.length - 1; i >= 0; i--) {
+            if (CanvasFurniture.hitTestBody(pt, state.textObjects[i])) {
+              setCanvasCursor('move');
+              return;
+            }
+          }
+        }
+
+        if (CanvasFurniture.hitTestImageLayer(pt, state.imageLayers)) {
+          setCanvasCursor('move');
+          return;
         }
         setCanvasCursor('default');
       }
@@ -1041,23 +1329,9 @@ export const StudioCanvas: React.FC<StudioCanvasProps> = ({
 
     // Paint Brush Drag
     if (activeTool === 'paint' && bgCtx) {
-      brushEngineRef.current.extendStroke(pt, {
-        shape: paintSettings.shape,
-        size: paintSettings.size,
-        feather: paintSettings.feather,
-        color: paintSettings.color,
-        paintMode: paintSettings.mode,
-        blurRadius: paintSettings.blurRadius,
-        patternScale: paintSettings.patternScale,
-      });
-      brushEngineRef.current.applyPaint(bgCtx, {
-        shape: paintSettings.shape,
-        size: paintSettings.size,
-        feather: paintSettings.feather,
-        color: paintSettings.color,
-        paintMode: paintSettings.mode,
-        blurRadius: paintSettings.blurRadius,
-      });
+      const paintOptions = getPaintOptions();
+      brushEngineRef.current.extendStroke(pt, paintOptions);
+      brushEngineRef.current.applyPaint(bgCtx, paintOptions);
       return;
     }
 
@@ -1086,15 +1360,40 @@ export const StudioCanvas: React.FC<StudioCanvasProps> = ({
       return;
     }
 
+    // Move or Resize Selected Image Layer
+    const imageGesture = activeImageGestureRef.current;
+    if (imageGesture && imageGesture.pointerId === e.pointerId) {
+      const clientDx = e.clientX - imageGesture.startClientPoint.x;
+      const clientDy = e.clientY - imageGesture.startClientPoint.y;
+
+      if (!imageGesture.hasMoved) {
+        if (Math.hypot(clientDx, clientDy) < GESTURE_DEADZONE_PX) {
+          return;
+        }
+        imageGesture.hasMoved = true;
+      }
+
+      imageGesture.latestDeltaX = pt.x - imageGesture.startImagePoint.x;
+      imageGesture.latestDeltaY = pt.y - imageGesture.startImagePoint.y;
+      imageGesture.latestShiftKey = e.shiftKey;
+
+      if (rafIdRef.current === null) {
+        rafIdRef.current = requestAnimationFrame(() => {
+          rafIdRef.current = null;
+          applyImageTransformFrame();
+        });
+      }
+      return;
+    }
+
     // Transform Selected Text Object
     const gesture = activeGestureRef.current;
     if ((activeTool === 'select' || activeTool === 'text') && gesture && gesture.pointerId === e.pointerId) {
       const clientDx = e.clientX - gesture.startClientPoint.x;
       const clientDy = e.clientY - gesture.startClientPoint.y;
 
-      // 3px deadzone threshold in CSS screen pixels
       if (!gesture.hasMoved) {
-        if (Math.hypot(clientDx, clientDy) < 3) {
+        if (Math.hypot(clientDx, clientDy) < GESTURE_DEADZONE_PX) {
           return;
         }
         gesture.hasMoved = true;
@@ -1114,7 +1413,11 @@ export const StudioCanvas: React.FC<StudioCanvasProps> = ({
     }
   };
 
-  // Pointer Up
+  /**
+   * Commits the active stroke or gesture, including the single-area OCR/inpaint request.
+   *
+   * @returns Resolves after any async AI result has been applied or discarded.
+   */
   const handlePointerUp = async () => {
     if (!isPointerDown || aiProcessingRef.current) return;
     setIsPointerDown(false);
@@ -1154,7 +1457,10 @@ export const StudioCanvas: React.FC<StudioCanvasProps> = ({
     // Finalize Live AI Inpaint
     if (activeTool === 'inpaint' && bgCanvas && bgCtx) {
       const bbox = brushEngineRef.current.endStroke(0);
-      if (bbox.width <= 5 || bbox.height <= 5) return;
+      if (bbox.width <= 5 || bbox.height <= 5) {
+        redrawOverlay();
+        return;
+      }
 
       // 1. Immediately redraw overlay so the user-drawn live red brush preview is cleared
       // and not accidentally baked into the inpaint source crop.
@@ -1197,6 +1503,7 @@ export const StudioCanvas: React.FC<StudioCanvasProps> = ({
       }
 
       const preInpaintPatch = BrushEngine.captureBoundingPatch(bgCtx, paddedBbox);
+      const startedJobId = jobIdRef.current;
 
       setIsAiProcessing(true);
       try {
@@ -1206,6 +1513,8 @@ export const StudioCanvas: React.FC<StudioCanvasProps> = ({
           paddedBbox,
           selectedInpaintEngineId
         );
+
+        if (!mountedRef.current || jobIdRef.current !== startedJobId) return;
 
         // Option B (Torii-parity): Composite inpainted result through the user's stroke mask.
         // Only pixels directly underneath the circle or square brush strokes are updated on bgCtx,
@@ -1244,7 +1553,10 @@ export const StudioCanvas: React.FC<StudioCanvasProps> = ({
     // Finalize Live AI Re-OCR Area
     if (activeTool === 'ocr' && bgCanvas && bgCtx) {
       const bbox = brushEngineRef.current.endStroke(0);
-      if (bbox.width <= 8 || bbox.height <= 8) return;
+      if (bbox.width <= 8 || bbox.height <= 8) {
+        redrawOverlay();
+        return;
+      }
 
       redrawOverlay();
       setOcrFeedback(null);
@@ -1265,6 +1577,7 @@ export const StudioCanvas: React.FC<StudioCanvasProps> = ({
         const paddedBbox = crops.bounds;
         const preOcrPatch = ocrSettings.inpaint
           ? BrushEngine.captureBoundingPatch(bgCtx, paddedBbox) : undefined;
+        const startedJobId = jobIdRef.current;
         const result = await requestStudioOcr(crops.recognition, paddedBbox, {
           ocrEngineId: selectedOcrEngineId,
           inpaintEngineId: selectedInpaintEngineId,
@@ -1272,6 +1585,7 @@ export const StudioCanvas: React.FC<StudioCanvasProps> = ({
           inpaint: ocrSettings.inpaint,
           backgroundPatchBase64: ocrSettings.inpaint ? crops.background.toDataURL('image/png') : undefined,
         });
+        if (!mountedRef.current || jobIdRef.current !== startedJobId) return;
         if (result.textObjects.length === 0) {
           setOcrFeedback('No text found in the selected area. Try selecting the whole text line.');
           return;
@@ -1287,6 +1601,7 @@ export const StudioCanvas: React.FC<StudioCanvasProps> = ({
         studioStore.setState({
           textObjects: nextTexts,
           selectedTextId: result.textObjects[0].id,
+          selectedImageLayerId: null,
         });
         setOcrFeedback(`Recognized ${result.textObjects.length} text box${result.textObjects.length === 1 ? '' : 'es'}.`);
         studioUndoStack.push({
@@ -1303,6 +1618,49 @@ export const StudioCanvas: React.FC<StudioCanvasProps> = ({
         aiProcessingRef.current = false;
         setIsAiProcessing(false);
       }
+      return;
+    }
+
+    // Commit Image Layer Move / Resize
+    const imageGesture = activeImageGestureRef.current;
+    if (imageGesture) {
+      if (imageGesture.hasMoved) {
+        const bounds = CanvasFurniture.resizeImageLayer(
+          imageGesture.initialLayer,
+          imageGesture.handle,
+          imageGesture.latestDeltaX,
+          imageGesture.latestDeltaY,
+          imageGesture.latestShiftKey
+        );
+        const currentLayers = studioStore.getState().imageLayers;
+        const nextLayers = currentLayers.map((layer) =>
+          layer.id === imageGesture.targetId ? { ...layer, ...bounds } : layer
+        );
+        studioStore.setState({ imageLayers: nextLayers });
+
+        const initial = imageGesture.initialLayer;
+        if (
+          bounds.x !== initial.x ||
+          bounds.y !== initial.y ||
+          bounds.width !== initial.width ||
+          bounds.height !== initial.height
+        ) {
+          const previousLayers = nextLayers.map((layer) =>
+            layer.id === initial.id ? initial : layer
+          );
+          studioUndoStack.push({
+            id: `image-transform-${Date.now()}`,
+            timestamp: Date.now(),
+            description:
+              imageGesture.handle === 'move' ? 'Move Sticker Layer' : 'Resize Sticker Layer',
+            imageLayers: { before: previousLayers, after: nextLayers },
+          });
+        }
+        lastClickRef.current = { time: 0, id: null };
+      }
+
+      activeImageGestureRef.current = null;
+      setActiveHandle(null);
       return;
     }
 
@@ -1378,6 +1736,11 @@ export const StudioCanvas: React.FC<StudioCanvasProps> = ({
       cancelAnimationFrame(rafIdRef.current);
       rafIdRef.current = null;
     }
+    // Cancelled mask strokes must not leave their red/blue preview painted on the overlay.
+    if (activeTool === 'inpaint' || activeTool === 'ocr') {
+      brushEngineRef.current.endStroke(0);
+      redrawOverlay();
+    }
     const gesture = activeGestureRef.current;
     if (gesture && gesture.hasMoved) {
       // Roll back store to initialTransform
@@ -1387,7 +1750,16 @@ export const StudioCanvas: React.FC<StudioCanvasProps> = ({
         ),
       }));
     }
+    const imageGesture = activeImageGestureRef.current;
+    if (imageGesture && imageGesture.hasMoved) {
+      studioStore.setState((state) => ({
+        imageLayers: state.imageLayers.map((layer) =>
+          layer.id === imageGesture.initialLayer.id ? imageGesture.initialLayer : layer
+        ),
+      }));
+    }
     activeGestureRef.current = null;
+    activeImageGestureRef.current = null;
     // The cancelled gesture's carried layout must not leak into the next interaction.
     resetContourFitMemo();
     lastLiveLayoutRef.current = null;
@@ -1495,10 +1867,8 @@ export const StudioCanvas: React.FC<StudioCanvasProps> = ({
   const selectedObj = textObjects.find((t) => t.id === selectedTextId);
   const editingObj = textObjects.find((t) => t.id === editingTextId);
 
-  let pillPos: Point | null = null;
-  let pillBottomPos: Point | null = null;
-
-  if (selectedObj && overlayCanvasRef.current) {
+  const pillPositions = useMemo(() => {
+    if (!selectedObj || !overlayCanvasRef.current) return null;
     const cx = selectedObj.x + selectedObj.width / 2;
     const cy = selectedObj.y + selectedObj.height / 2;
     const w = selectedObj.width;
@@ -1523,9 +1893,15 @@ export const StudioCanvas: React.FC<StudioCanvasProps> = ({
     }
 
     const rect = overlayCanvasRef.current.getBoundingClientRect();
-    pillPos = imageToClient(cx, minY, rect, imageWidth, imageHeight);
-    pillBottomPos = imageToClient(cx, maxY, rect, imageWidth, imageHeight);
-  }
+    return {
+      pillPos: imageToClient(cx, minY, rect, imageWidth, imageHeight),
+      pillBottomPos: imageToClient(cx, maxY, rect, imageWidth, imageHeight),
+      measuredAtTick: viewportTick,
+    };
+  }, [selectedObj, viewportTick, imageWidth, imageHeight]);
+
+  const pillPos = pillPositions?.pillPos ?? null;
+  const pillBottomPos = pillPositions?.pillBottomPos ?? null;
 
   return (
     <div
@@ -1578,6 +1954,7 @@ export const StudioCanvas: React.FC<StudioCanvasProps> = ({
           onPointerMove={handlePointerMove}
           onPointerUp={handlePointerUp}
           onPointerCancel={handlePointerCancel}
+          onPointerLeave={hideBrushCursor}
           onDoubleClick={handleDoubleClick}
           onContextMenu={handleContextMenu}
           style={{
@@ -1750,7 +2127,7 @@ export const StudioCanvas: React.FC<StudioCanvasProps> = ({
                   overflow: 'hidden',
                   // With exact contour geometry the overlay paints highlight and caret, so
                   // the textarea's uniform-layout selection and caret stay invisible.
-                  caretColor: contourGeometry ? 'transparent' : '#60c1e5',
+                  caretColor: contourGeometry ? 'transparent' : appearance.caretColor,
                   pointerEvents: contourGeometry ? 'none' : undefined,
                 }}
                 autoFocus
@@ -1769,6 +2146,29 @@ export const StudioCanvas: React.FC<StudioCanvasProps> = ({
           );
         })()}
       </div>
+
+      {/* Brush footprint ring; color comes from the appearance settings. */}
+      {showsBrushCursor && brushCursorSize !== null && (
+        <div
+          ref={brushCursorRef}
+          data-studio-brush-cursor="true"
+          aria-hidden="true"
+          style={{
+            position: 'fixed',
+            left: 0,
+            top: 0,
+            width: `${brushCursorSize * zoom}px`,
+            height: `${brushCursorSize * zoom}px`,
+            border: `${BRUSH_CURSOR_BORDER_WIDTH_PX}px solid ${appearance.brushCursorColor}`,
+            borderRadius: brushCursorShape === 'circle' ? '50%' : '0px',
+            transform: 'translate(-50%, -50%)',
+            opacity: 0,
+            pointerEvents: 'none',
+            zIndex: BRUSH_CURSOR_Z_INDEX,
+            boxSizing: 'border-box',
+          }}
+        />
+      )}
 
       {/* Floating Action Pill Toolbar */}
       {pillPos && selectedObj && viewMode === 'translated' && !isSpacePanning && !hideBoxes && (() => {

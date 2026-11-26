@@ -1,10 +1,10 @@
 import type { Point } from '../types';
 
-/** Minimum permitted zoom factor (10%). */
-export const MIN_ZOOM_LEVEL = 0.1;
+/** Single source of truth for the minimum permitted zoom factor (5%). */
+export const MIN_ZOOM = 0.05;
 
-/** Maximum permitted zoom factor (500%). */
-export const MAX_ZOOM_LEVEL = 5.0;
+/** Single source of truth for the maximum permitted zoom factor (800%). */
+export const MAX_ZOOM = 8.0;
 
 /**
  * Transforms screen client coordinates into image pixel space using the canvas element's bounding rect.
@@ -88,7 +88,7 @@ export function calculateFitWidth(
 ): number {
   if (imageWidth <= 0 || containerWidth <= 0) return 1.0;
   const available = Math.max(10, containerWidth - paddingPx);
-  return Math.max(MIN_ZOOM_LEVEL, Math.min(MAX_ZOOM_LEVEL, available / imageWidth));
+  return Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, available / imageWidth));
 }
 
 /**
@@ -106,7 +106,7 @@ export function calculateFitHeight(
 ): number {
   if (imageHeight <= 0 || containerHeight <= 0) return 1.0;
   const available = Math.max(10, containerHeight - paddingPx);
-  return Math.max(MIN_ZOOM_LEVEL, Math.min(MAX_ZOOM_LEVEL, available / imageHeight));
+  return Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, available / imageHeight));
 }
 
 /**

@@ -203,6 +203,52 @@ function fitCaptionLines(
 }
 
 /**
+ * Remaps per-character style overrides after a text edit so each override follows its original
+ * character instead of staying at the same index. The common prefix and suffix are matched once;
+ * overrides inside the replaced middle range are dropped and inserted characters start unstyled.
+ *
+ * @param prevText - Text before the edit.
+ * @param nextText - Text after the edit.
+ * @param prevStyles - Per-character overrides aligned with `prevText`.
+ * @returns Overrides aligned with `nextText`, or undefined when no styled characters remain.
+ */
+export function remapCharStylesOnTextEdit(
+  prevText: string,
+  nextText: string,
+  prevStyles?: (CharStyleOverride | null)[]
+): (CharStyleOverride | null)[] | undefined {
+  if (!prevStyles) return undefined;
+  if (prevText === nextText) return prevStyles;
+
+  let prefixLength = 0;
+  const sharedLength = Math.min(prevText.length, nextText.length);
+  while (prefixLength < sharedLength && prevText[prefixLength] === nextText[prefixLength]) {
+    prefixLength += 1;
+  }
+
+  let prevSuffixStart = prevText.length - 1;
+  let nextSuffixStart = nextText.length - 1;
+  while (
+    prevSuffixStart >= prefixLength &&
+    nextSuffixStart >= prefixLength &&
+    prevText[prevSuffixStart] === nextText[nextSuffixStart]
+  ) {
+    prevSuffixStart -= 1;
+    nextSuffixStart -= 1;
+  }
+
+  const suffixLength = prevText.length - 1 - prevSuffixStart;
+  const remapped = new Array<CharStyleOverride | null>(nextText.length).fill(null);
+  for (let index = 0; index < prefixLength; index += 1) {
+    remapped[index] = prevStyles[index] ?? null;
+  }
+  for (let index = 0; index < suffixLength; index += 1) {
+    remapped[nextSuffixStart + 1 + index] = prevStyles[prevSuffixStart + 1 + index] ?? null;
+  }
+  return remapped.some(Boolean) ? remapped : undefined;
+}
+
+/**
  * Merges an edit and recomputes layout only when measured inputs actually change.
  * Engine preference alone never changes existing layout. Character overrides invalidate
  * lines, but the shared fitter currently measures uniform object-level typography, not runs.
@@ -233,6 +279,9 @@ export function applyTextObjectUpdates(
     updated.textFromGeneratedLines = false;
     updated.lines = undefined;
     updated.positionedLines = undefined;
+    if (updates.charStyles === undefined && object.charStyles?.some(Boolean)) {
+      updated.charStyles = remapCharStylesOnTextEdit(object.text, updates.text, object.charStyles);
+    }
   }
   // Caption Box trusts persisted lines whenever they match the text case-insensitively, so a
   // casing toggle would keep painting the previous casing. Drop them and re-measure both casing

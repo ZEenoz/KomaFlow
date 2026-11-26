@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { applyTextObjectUpdates, getTypesetDisplayText, getTypesetMeasureContext, prepareInitialTextObject, recalculateBlockTypeset, resetContourFitMemo } from './studioTypeset';
+import { applyTextObjectUpdates, getTypesetDisplayText, getTypesetMeasureContext, prepareInitialTextObject, recalculateBlockTypeset, remapCharStylesOnTextEdit, resetContourFitMemo } from './studioTypeset';
 import { availableTypesetModesFor, hasBubbleContour } from './typesetModes';
 import type { TextObject } from '../types';
 
@@ -111,6 +111,19 @@ describe('Studio layout ownership', () => {
     expect(pinned.fontSize).toBe(30);
     const updated = applyTextObjectUpdates({ ...object, typesetMode: 'balloon' as const }, { fontSize: 30 }, 'balloon');
     expect(updated.fontSize).toBe(30);
+  });
+
+  it('remaps character overrides onto surviving characters when text changes', () => {
+    const styled: TextObject = {
+      ...object,
+      text: 'abcd',
+      lines: ['abcd'],
+      charStyles: [{ bold: true }, null, { italic: true }, { color: '#ff0000' }],
+    };
+    const updated = applyTextObjectUpdates(styled, { text: 'abXYcd' }, 'simple');
+    expect(updated.charStyles).toEqual([
+      { bold: true }, null, null, null, { italic: true }, { color: '#ff0000' },
+    ]);
   });
 
   it('restores original casing when the Caption Box uppercase toggle turns off', () => {
@@ -525,5 +538,29 @@ describe('engine availability from bubble evidence', () => {
     });
     expect(updated.lines).toEqual(contour.lines);
     expect(updated.contourPoints).toHaveLength(4);
+  });
+});
+
+describe('remapCharStylesOnTextEdit', () => {
+  it('shifts every override right for a prefix insertion', () => {
+    expect(remapCharStylesOnTextEdit('abc', 'Xabc', [{ bold: true }, null, { italic: true }]))
+      .toEqual([null, { bold: true }, null, { italic: true }]);
+  });
+
+  it('keeps the suffix aligned for a middle insertion', () => {
+    expect(remapCharStylesOnTextEdit('abcd', 'abXYcd', [
+      null, { bold: true }, null, { color: '#ff0000' },
+    ])).toEqual([null, { bold: true }, null, null, null, { color: '#ff0000' }]);
+  });
+
+  it('drops overrides for deleted characters and keeps surviving suffix overrides', () => {
+    expect(remapCharStylesOnTextEdit('abcd', 'ad', [
+      { bold: true }, { italic: true }, { color: '#00ff00' }, { color: '#0000ff' },
+    ])).toEqual([{ bold: true }, { color: '#0000ff' }]);
+  });
+
+  it('clears all overrides when the text is fully deleted', () => {
+    expect(remapCharStylesOnTextEdit('abc', '', [{ bold: true }, null, { italic: true }]))
+      .toBeUndefined();
   });
 });

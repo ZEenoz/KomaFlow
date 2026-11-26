@@ -1,7 +1,16 @@
 import React from 'react';
-import { Upload, FlipHorizontal, FlipVertical, Trash2, Loader } from 'lucide-react';
+import {
+  Upload,
+  FlipHorizontal,
+  FlipVertical,
+  Trash2,
+  Loader,
+  ArrowUp,
+  ArrowDown,
+} from 'lucide-react';
 import { studioStore, useStudioStore } from '../state/studioStore';
 import { studioUndoStack } from '../state/undoStack';
+import { moveImageLayer, revokeImageLayerUrls } from '../state/imageLayerUtils';
 import type { ImageLayer } from '../types';
 import { STUDIO_IMAGE_INPUT_ACCEPT } from '../../shared/constants';
 
@@ -25,6 +34,9 @@ export const ImageLayerSettings: React.FC<ImageLayerSettingsProps> = ({
   const selectedImageLayerId = useStudioStore((s) => s.selectedImageLayerId);
 
   const selectedLayer = imageLayers.find((l) => l.id === selectedImageLayerId);
+  const selectedIndex = selectedLayer
+    ? imageLayers.findIndex((layer) => layer.id === selectedLayer.id)
+    : -1;
 
   /**
    * Updates selected sticker and records undo history.
@@ -40,6 +52,25 @@ export const ImageLayerSettings: React.FC<ImageLayerSettingsProps> = ({
       id: `layer-update-${Date.now()}`,
       timestamp: Date.now(),
       description: 'Update Sticker Layer',
+      imageLayers: { before: prev, after: next },
+    });
+  };
+
+  /**
+   * Moves the selected sticker one step through paint order.
+   * @param offset One step toward the top (+1) or bottom (-1).
+   * @returns Nothing; no-op when no sticker is selected or it is already at the edge.
+   */
+  const handleMoveLayer = (offset: 1 | -1) => {
+    if (!selectedLayer) return;
+    const prev = [...imageLayers];
+    const next = moveImageLayer(prev, selectedLayer.id, offset);
+    if (next === prev) return;
+    studioStore.setState({ imageLayers: next });
+    studioUndoStack.push({
+      id: `reorder-layer-${Date.now()}`,
+      timestamp: Date.now(),
+      description: offset === 1 ? 'Bring Sticker Forward' : 'Send Sticker Backward',
       imageLayers: { before: prev, after: next },
     });
   };
@@ -71,8 +102,9 @@ export const ImageLayerSettings: React.FC<ImageLayerSettingsProps> = ({
         flipV: false,
       };
 
-      const prev = [...imageLayers];
-      const next = [...imageLayers, newLayer];
+      const currentLayers = studioStore.getState().imageLayers;
+      const prev = [...currentLayers];
+      const next = [...currentLayers, newLayer];
       studioStore.setState({
         imageLayers: next,
         selectedImageLayerId: newLayer.id,
@@ -84,6 +116,7 @@ export const ImageLayerSettings: React.FC<ImageLayerSettingsProps> = ({
         imageLayers: { before: prev, after: next },
       });
     };
+    img.onerror = () => URL.revokeObjectURL(url);
     img.src = url;
   };
 
@@ -113,6 +146,7 @@ export const ImageLayerSettings: React.FC<ImageLayerSettingsProps> = ({
       imageLayers: next,
       selectedImageLayerId: null,
     });
+    revokeImageLayerUrls([selectedLayer]);
     studioUndoStack.push({
       id: `delete-layer-${Date.now()}`,
       timestamp: Date.now(),
@@ -190,13 +224,33 @@ export const ImageLayerSettings: React.FC<ImageLayerSettingsProps> = ({
         <div className="space-y-3 pt-2 border-t border-[#282d3f]">
           <div className="flex items-center justify-between">
             <span className="font-semibold text-slate-200">Selected Sticker</span>
-            <button
-              onClick={handleDelete}
-              className="p-1 rounded text-[#60c1e5] hover:bg-[#005a9c]/15 transition"
-              title="Delete sticker"
-            >
-              <Trash2 className="w-4 h-4" />
-            </button>
+            <div className="flex items-center gap-1">
+              <button
+                onClick={() => handleMoveLayer(1)}
+                disabled={selectedIndex === imageLayers.length - 1}
+                className="p-1 rounded text-[#60c1e5] hover:bg-[#005a9c]/15 transition disabled:opacity-30 disabled:cursor-not-allowed"
+                title="Move sticker forward"
+                aria-label="Move sticker forward"
+              >
+                <ArrowUp className="w-4 h-4" />
+              </button>
+              <button
+                onClick={() => handleMoveLayer(-1)}
+                disabled={selectedIndex <= 0}
+                className="p-1 rounded text-[#60c1e5] hover:bg-[#005a9c]/15 transition disabled:opacity-30 disabled:cursor-not-allowed"
+                title="Move sticker backward"
+                aria-label="Move sticker backward"
+              >
+                <ArrowDown className="w-4 h-4" />
+              </button>
+              <button
+                onClick={handleDelete}
+                className="p-1 rounded text-[#60c1e5] hover:bg-[#005a9c]/15 transition"
+                title="Delete sticker"
+              >
+                <Trash2 className="w-4 h-4" />
+              </button>
+            </div>
           </div>
 
           <div>

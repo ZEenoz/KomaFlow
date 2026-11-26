@@ -41,6 +41,12 @@ import {
 import { hasBubbleContour, isTypesetModeAvailable, resolveTypesetMode } from '../canvas/typesetModes';
 import type { TextObject, CharStyleOverride } from '../types';
 
+/** Inspector range for the drop-shadow blur slider, in canvas pixels. */
+const SHADOW_BLUR_MIN_PX = 0;
+const SHADOW_BLUR_MAX_PX = 20;
+/** Matches TextRenderer's fallback when an object has no explicit shadow blur. */
+const DEFAULT_SHADOW_BLUR_PX = 2;
+
 /** Renders typography controls; user edits reflow text, while mode choices only set editing intent. */
 export const TypographySettings: React.FC = () => {
   const textObjects = useStudioStore((s) => s.textObjects);
@@ -78,6 +84,8 @@ export const TypographySettings: React.FC = () => {
 
   const cropCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const initialTextObjectsRef = useRef<TextObject[] | null>(null);
+  /** Snapshot for one original-OCR edit session; committed as a single undo entry on blur. */
+  const initialOriginalTextObjectsRef = useRef<TextObject[] | null>(null);
   /** Open slider gesture snapshot; one drag/keyboard hold commits a single undo entry. */
   const sliderGestureRef = useRef<{ before: TextObject[] } | null>(null);
 
@@ -273,6 +281,27 @@ export const TypographySettings: React.FC = () => {
   };
 
   /**
+   * Opens a gesture and applies one transient preview frame.
+   *
+   * @param partial - Typography fields previewed by the active control.
+   */
+  const updateTransiently = (partial: Partial<TextObject>) => {
+    beginSliderGesture();
+    updateSelected(partial, { transient: true });
+  };
+
+  /** Shared drag/keyboard lifecycle for continuous controls; the commit groups one undo entry. */
+  const sliderGestureProps = {
+    onPointerDown: beginSliderGesture,
+    onPointerUp: commitSliderGesture,
+    onPointerCancel: commitSliderGesture,
+    onBlur: commitSliderGesture,
+    onKeyUp: (event: React.KeyboardEvent) => {
+      if (!event.repeat) commitSliderGesture();
+    },
+  };
+
+  /**
    * Edits dialogue live with dynamic typeset and line reflow in its chosen mode.
    * @param newText Replacement dialogue; the initial snapshot groups keystrokes for undo.
    * @returns Nothing; writes updated dialogue layout to the store.
@@ -364,18 +393,34 @@ export const TypographySettings: React.FC = () => {
     setTimeout(() => setCopiedOriginal(false), 1500);
   };
 
+  /**
+   * Updates original OCR text live while grouping the whole edit session into one undo entry.
+   *
+   * @param newOriginal - Replacement source transcription.
+   */
   const handleUpdateOriginalText = (newOriginal: string) => {
     if (!obj.id) return;
-    const prev = [...textObjects];
-    const next = textObjects.map((t) =>
+    if (!initialOriginalTextObjectsRef.current) {
+      initialOriginalTextObjectsRef.current = [...studioStore.getState().textObjects];
+    }
+    const next = studioStore.getState().textObjects.map((t) =>
       t.id === obj.id ? { ...t, originalText: newOriginal } : t
     );
     studioStore.setState({ textObjects: next });
+  };
+
+  /** Commits the original-OCR edit session on blur, matching dialogue textarea grouping. */
+  const handleOriginalTextBlur = () => {
+    if (!initialOriginalTextObjectsRef.current) return;
+    const prev = initialOriginalTextObjectsRef.current;
+    const current = studioStore.getState().textObjects;
+    initialOriginalTextObjectsRef.current = null;
+    if (JSON.stringify(prev) === JSON.stringify(current)) return;
     studioUndoStack.push({
       id: `orig-text-edit-${Date.now()}`,
       timestamp: Date.now(),
       description: 'Update Original OCR Text',
-      textObjects: { before: prev, after: next },
+      textObjects: { before: prev, after: current },
     });
   };
 
@@ -533,8 +578,16 @@ export const TypographySettings: React.FC = () => {
                   <button
                     type="button"
                     onClick={() => {
-                      studioStore.setState({
-                        textObjects: textObjects.map((t) => (t.id === selectedObj.id ? { ...t, isSkipped: false } : t)),
+                      const before = [...studioStore.getState().textObjects];
+                      const after = before.map((t) =>
+                        t.id === selectedObj.id ? { ...t, isSkipped: false } : t
+                      );
+                      studioStore.setState({ textObjects: after });
+                      studioUndoStack.push({
+                        id: `include-bubble-${Date.now()}`,
+                        timestamp: Date.now(),
+                        description: 'Include Bubble',
+                        textObjects: { before, after },
                       });
                     }}
                     className="px-2 py-0.5 rounded bg-amber-600/30 hover:bg-amber-600/50 text-amber-200 text-[10px] font-medium transition"
@@ -603,6 +656,7 @@ export const TypographySettings: React.FC = () => {
           <textarea
             value={obj.originalText ?? ''}
             onChange={(e) => handleUpdateOriginalText(e.target.value)}
+            onBlur={handleOriginalTextBlur}
             placeholder="Edit original raw text (e.g. Japanese, Korean)..."
             rows={2}
             className="w-full rounded-lg border border-[#60c1e5]/60 bg-[#12141c] p-2 text-xs text-slate-200 focus:outline-hidden resize-none font-sans"
@@ -1035,21 +1089,25 @@ export const TypographySettings: React.FC = () => {
           <input
             type="color"
             value={effectiveColor}
-            onChange={(e) => updateSelected({ color: e.target.value })}
+            {...sliderGestureProps}
+            onChange={(e) => updateTransiently({ color: e.target.value })}
             className="w-7 h-7 rounded border border-[#282d3f] bg-transparent cursor-pointer"
           />
           {obj.isGradient && (
             <input
               type="color"
               value={obj.color2 || '#ef4444'}
-              onChange={(e) => updateSelected({ color2: e.target.value })}
+              {...sliderGestureProps}
+              onChange={(e) => updateTransiently({ color2: e.target.value })}
               className="w-7 h-7 rounded border border-[#282d3f] bg-transparent cursor-pointer"
             />
           )}
           <input
             type="text"
             value={effectiveColor}
-            onChange={(e) => updateSelected({ color: e.target.value })}
+            onFocus={beginSliderGesture}
+            onChange={(e) => updateTransiently({ color: e.target.value })}
+            onBlur={commitSliderGesture}
             className="flex-1 rounded-lg border border-[#282d3f] bg-[#090a0f] px-2 py-1 font-mono text-slate-200"
           />
         </div>
@@ -1065,7 +1123,8 @@ export const TypographySettings: React.FC = () => {
           <input
             type="color"
             value={effectiveStrokeColor}
-            onChange={(e) => updateSelected({ strokeColor: e.target.value })}
+            {...sliderGestureProps}
+            onChange={(e) => updateTransiently({ strokeColor: e.target.value })}
             className="w-7 h-7 rounded border border-[#282d3f] bg-transparent cursor-pointer"
           />
           <input
@@ -1073,7 +1132,8 @@ export const TypographySettings: React.FC = () => {
             min="0"
             max="20"
             value={effectiveStrokeWidth}
-            onChange={(e) => updateSelected({ strokeWidth: Number(e.target.value) })}
+            {...sliderGestureProps}
+            onChange={(e) => updateTransiently({ strokeWidth: Number(e.target.value) })}
             className="flex-1 accent-[#60c1e5]"
           />
         </div>
@@ -1090,7 +1150,8 @@ export const TypographySettings: React.FC = () => {
               min="0"
               max="25"
               value={obj.shadowDistance || 0}
-              onChange={(e) => updateSelected({ shadowDistance: Number(e.target.value) })}
+              {...sliderGestureProps}
+              onChange={(e) => updateTransiently({ shadowDistance: Number(e.target.value) })}
               className="w-full accent-[#60c1e5]"
             />
           </div>
@@ -1104,10 +1165,26 @@ export const TypographySettings: React.FC = () => {
               min="0"
               max="360"
               value={obj.shadowAngle || 45}
-              onChange={(e) => updateSelected({ shadowAngle: Number(e.target.value) })}
+              {...sliderGestureProps}
+              onChange={(e) => updateTransiently({ shadowAngle: Number(e.target.value) })}
               className="w-full accent-[#60c1e5]"
             />
           </div>
+        </div>
+        <div className="pt-1">
+          <div className="flex justify-between text-slate-400 mb-1">
+            <span>Shadow Blur</span>
+            <span className="font-mono text-slate-200">{obj.shadowBlur ?? DEFAULT_SHADOW_BLUR_PX}px</span>
+          </div>
+          <input
+            type="range"
+            min={SHADOW_BLUR_MIN_PX}
+            max={SHADOW_BLUR_MAX_PX}
+            value={obj.shadowBlur ?? DEFAULT_SHADOW_BLUR_PX}
+            {...sliderGestureProps}
+            onChange={(e) => updateTransiently({ shadowBlur: Number(e.target.value) })}
+            className="w-full accent-[#60c1e5]"
+          />
         </div>
       </div>
 
@@ -1118,7 +1195,8 @@ export const TypographySettings: React.FC = () => {
           <input
             type="color"
             value={obj.backgroundFill && obj.backgroundFill !== 'transparent' ? obj.backgroundFill : '#ffffff'}
-            onChange={(e) => updateSelected({ backgroundFill: e.target.value })}
+            {...sliderGestureProps}
+            onChange={(e) => updateTransiently({ backgroundFill: e.target.value })}
             className="w-7 h-7 rounded border border-[#282d3f] bg-transparent cursor-pointer"
           />
           <button
@@ -1140,7 +1218,8 @@ export const TypographySettings: React.FC = () => {
                 min="0"
                 max="30"
                 value={obj.backgroundPadding || 4}
-                onChange={(e) => updateSelected({ backgroundPadding: Number(e.target.value) })}
+                {...sliderGestureProps}
+                onChange={(e) => updateTransiently({ backgroundPadding: Number(e.target.value) })}
                 className="w-full accent-[#60c1e5]"
               />
             </div>
@@ -1154,7 +1233,8 @@ export const TypographySettings: React.FC = () => {
                 min="0"
                 max="50"
                 value={obj.backgroundBorderRadius || 0}
-                onChange={(e) => updateSelected({ backgroundBorderRadius: Number(e.target.value) })}
+                {...sliderGestureProps}
+                onChange={(e) => updateTransiently({ backgroundBorderRadius: Number(e.target.value) })}
                 className="w-full accent-[#60c1e5]"
               />
             </div>

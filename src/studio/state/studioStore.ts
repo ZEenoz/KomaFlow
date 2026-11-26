@@ -1,6 +1,7 @@
 import { useSyncExternalStore } from 'react';
 import { STORAGE_KEYS, type TypesetMode, DEFAULT_TYPESET_MODE } from '../../shared/constants';
 import { DEFAULT_OCR_TIER_ID } from '../../shared/ocrTiers';
+import { MIN_ZOOM, MAX_ZOOM } from '../canvas/CanvasViewport';
 import type {
   BrushShape,
   EditorAppearanceSettings,
@@ -12,12 +13,6 @@ import type {
   StudioViewMode,
   TextObject,
 } from '../types';
-
-/** Minimum permitted zoom factor. */
-export const MIN_ZOOM_LEVEL = 0.05;
-
-/** Maximum permitted zoom factor. */
-export const MAX_ZOOM_LEVEL = 8.0;
 
 /** Default brush size in canvas pixels. */
 export const DEFAULT_BRUSH_SIZE = 30;
@@ -115,6 +110,8 @@ export interface StudioState {
 
   // Engine Tiers & Global Sync
   syncWithGlobal: boolean;
+  /** True once popup engine selections have been read at least once this session. */
+  hasHydratedEngines: boolean;
   selectedInpaintEngineId: string;
   selectedOcrEngineId: string;
   selectedTranslationEngineId: string;
@@ -176,6 +173,7 @@ const initialState: StudioState = {
   imageDimensions: { width: 0, height: 0 },
 
   syncWithGlobal: true,
+  hasHydratedEngines: false,
   selectedInpaintEngineId: 'lama-manga',
   selectedOcrEngineId: DEFAULT_OCR_TIER_ID,
   selectedTranslationEngineId: 'gg-translate',
@@ -310,7 +308,7 @@ class StudioStore {
    * @param targetZoom - Unclamped target zoom factor.
    */
   public setClampedZoom = (targetZoom: number): void => {
-    const clamped = Math.max(MIN_ZOOM_LEVEL, Math.min(MAX_ZOOM_LEVEL, targetZoom));
+    const clamped = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, targetZoom));
     this.setState({ zoom: clamped });
   };
 
@@ -371,19 +369,29 @@ class StudioStore {
 
   /**
    * Hydrates engine selections from popupState in chrome.storage.local.
+   *
+   * The first call always reads storage. Later calls skip when Local Only is active, because a
+   * tool-panel remount must not overwrite the engine chosen for this session; pass `force` to
+   * re-read storage anyway.
+   *
+   * @param options - Hydration controls; `force` re-reads storage even in Local Only mode.
    */
-  public hydrateFromStorage = (): void => {
+  public hydrateFromStorage = (options: { force?: boolean } = {}): void => {
     if (typeof chrome === 'undefined' || !chrome.storage?.local) return;
+    if (this.state.hasHydratedEngines && !this.state.syncWithGlobal && !options.force) return;
     chrome.storage.local.get(STORAGE_KEYS.POPUP_STATE, (data) => {
       const state = data[STORAGE_KEYS.POPUP_STATE] as any;
-      if (state) {
-        this.setState({
-          selectedInpaintEngineId: state.activeInpaintId || this.state.selectedInpaintEngineId,
-          selectedOcrEngineId: state.activeOcrId || this.state.selectedOcrEngineId,
-          selectedTranslationEngineId: state.activeEngineId || this.state.selectedTranslationEngineId,
-          selectedColorEngineId: state.activeColorId || this.state.selectedColorEngineId,
-        });
-      }
+      this.setState((prev) => ({
+        hasHydratedEngines: true,
+        ...(state
+          ? {
+              selectedInpaintEngineId: state.activeInpaintId || prev.selectedInpaintEngineId,
+              selectedOcrEngineId: state.activeOcrId || prev.selectedOcrEngineId,
+              selectedTranslationEngineId: state.activeEngineId || prev.selectedTranslationEngineId,
+              selectedColorEngineId: state.activeColorId || prev.selectedColorEngineId,
+            }
+          : {}),
+      }));
     });
   };
 }
